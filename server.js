@@ -87,7 +87,7 @@ app.use(globalLimiter);
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 30,
   message: { msg: 'Too many auth attempts, try again later' }
 });
 
@@ -469,7 +469,7 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
     });
 
     // create post with minimal fields + atomic counters
-   const postDoc = await Post.create({
+ const postDoc = await Post.create({
   userId: req.user.id,
   username: req.user.username,
   title: String(req.body.title || '').slice(0, 200),
@@ -481,6 +481,10 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
   views: 0,
   commentsCount: 0,
   createdAt: new Date()
+});
+
+setImmediate(() => {
+  Post.updateOne({ _id: postDoc._id }, { $set: { status: "approved" } });
 });
 
 
@@ -497,11 +501,14 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
 // Media streaming (single implementation)
 // -----------------
 app.get('/media/:folder/:file', (req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
   try {
     // FIXED: avoid wildcard origin when credentials are true — select origin from request if allowed
     const originToAllow = req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)
       ? req.headers.origin
       : ALLOWED_ORIGINS[0];
+      
     res.setHeader('Access-Control-Allow-Origin', originToAllow);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
@@ -1300,8 +1307,9 @@ app.get('/posts/:id', async (req, res) => {
 // -----------------
 // Start server
 // -----------------
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on 0.0.0.0:${PORT}`);
+  console.log(`Server listening on ${PORT}`);
 });
+
  Comment.listenerCount();
