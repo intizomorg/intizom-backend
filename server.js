@@ -1339,6 +1339,14 @@ app.get('/admin/media', authMiddleware, adminMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+app.get('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('username role');
+    res.json(user);
+  } catch {
+    res.status(401).json({ msg: 'Unauthorized' });
+  }
+});
 
 // -----------------
 // Start server
