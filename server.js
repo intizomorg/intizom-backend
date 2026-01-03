@@ -123,6 +123,13 @@ app.use('/avatars', (req, res, next) => {
 
   next();
 }, express.static(AVATAR_ROOT));
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 // -----------------
 // Redis optional
@@ -443,59 +450,61 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, res) => {
   try {
     const files = req.files || [];
-    if (!files.length) return res.status(400).json({ msg: 'Media yuklanmadi' });
+    if (!files.length) return res.status(400).json({ msg: "Media yuklanmadi" });
 
-    const hasVideo = files.some(f => (f.mimetype || '').startsWith('video/'));
-    const hasImage = files.some(f => (f.mimetype || '').startsWith('image/'));
+    const hasVideo = files.some(f => (f.mimetype || "").startsWith("video/"));
+    const hasImage = files.some(f => (f.mimetype || "").startsWith("image/"));
 
-    if (hasVideo && hasImage) { files.forEach(f => fs.unlinkSync(f.path)); return res.status(400).json({ msg: 'Video va rasm aralashtirib bo‘lmaydi' }); }
-    if (hasVideo && files.length > 1) { files.forEach(f => fs.unlinkSync(f.path)); return res.status(400).json({ msg: 'Faqat bitta video mumkin' }); }
+    if (hasVideo && hasImage) {
+      files.forEach(f => fs.unlinkSync(f.path));
+      return res.status(400).json({ msg: "Video va rasm aralashtirib bo‘lmaydi" });
+    }
 
-    const allowedPrefixes = hasVideo ? ['video/'] : ['image/'];
-    const validations = await Promise.all(files.map(f => validateFileMagic(f.path, allowedPrefixes)));
-    if (validations.some(v => !v)) { files.forEach(f => fs.unlinkSync(f.path)); return res.status(400).json({ msg: 'Yuklangan fayl yaroqsiz yoki MIME soxtalangan' }); }
+    if (hasVideo && files.length > 1) {
+      files.forEach(f => fs.unlinkSync(f.path));
+      return res.status(400).json({ msg: "Faqat bitta video mumkin" });
+    }
 
-    // FIXED: produce /media/:folder/:file URLs based on PERSISTENT_MEDIA_ROOT
-    const media = files.map(f => {
-      const rel = path.relative(PERSISTENT_MEDIA_ROOT, f.path).replace(/\\/g, '/');
-      return {
-        type: f.mimetype && f.mimetype.startsWith('video/') ? 'video' : 'image',
-        url: `${MEDIA_BASE_URL}/media/${rel}`
-      };
+    const uploads = [];
+
+    for (const file of files) {
+      const result = await cloudinary.uploader.upload(file.path, {
+        resource_type: file.mimetype.startsWith("video") ? "video" : "image",
+        folder: "intizom"
+      });
+
+      fs.unlinkSync(file.path); // lokalni o‘chir
+
+      uploads.push({
+        type: file.mimetype.startsWith("video") ? "video" : "image",
+        url: result.secure_url
+      });
+    }
+
+    const postDoc = await Post.create({
+      userId: req.user.id,
+      username: req.user.username,
+      title: String(req.body.title || "").slice(0, 200),
+      description: String(req.body.description || "").slice(0, 2000),
+      type: hasVideo ? "video" : "carousel",
+      media: uploads,
+      status: "approved",
+      likesCount: 0,
+      views: 0,
+      commentsCount: 0,
+      createdAt: new Date()
     });
 
-    // create post with minimal fields + atomic counters
- const postDoc = await Post.create({
-  userId: req.user.id,
-  username: req.user.username,
-  title: String(req.body.title || '').slice(0, 200),
-  description: String(req.body.description || '').slice(0, 2000),
-  type: hasVideo ? 'video' : 'carousel',
-  media,
-  status: 'approved',
-  likesCount: 0,
-  views: 0,
-  commentsCount: 0,
-  createdAt: new Date()
-});
-
-setImmediate(() => {
-  Post.updateOne({ _id: postDoc._id }, { $set: { status: "approved" } });
-});
-
-
-    // optional fast-approve for MVP admins can enable by role check
-    // For now respond with created post
-    res.json({ msg: 'Post yaratildi', post: postDoc });
+    res.json({ msg: "Post yaratildi", post: postDoc });
   } catch (e) {
-    console.error('UPLOAD ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+    console.error("UPLOAD ERROR:", e);
+    res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 // -----------------
 // Media streaming (single implementation)
