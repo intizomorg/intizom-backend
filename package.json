@@ -1,37 +1,29 @@
 {
-  "name": "backend",
+  "name": "intizom-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "Intizom backend",
+  "main": "server.js",
   "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
-    "@socket.io/redis-adapter": "^8.3.0",
-    "bcryptjs": "^3.0.3",
-    "cloudinary": "^2.8.0",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.2.1",
-    "file-type": "^21.2.0",
-    "framer-motion": "^12.23.25",
-    "helmet": "^8.1.0",
-    "ioredis": "^5.8.2",
-    "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.0.2",
-    "multer": "^2.0.2",
-    "sanitize-html": "^2.17.0",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.0.0",
+    "file-type": "^19.0.0",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "mime-types": "^2.1.35",
+    "mongoose": "^8.0.3",
+    "multer": "^1.4.5-lts.1",
     "socket.io": "^4.8.3"
-    "dependencies": {
-  "cloudinary": "^1.41.3",
-  "file-type": "^19.0.0",
-  "mime-types": "^2.1.35"
-}
-
   }
 }
