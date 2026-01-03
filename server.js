@@ -59,14 +59,22 @@ app.use(helmet({
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // allow curl, mobile apps
-    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'));
+    if (!origin) return callback(null, true);
+
+    const allowed = ALLOWED_ORIGINS.some(o =>
+      origin === o || origin.startsWith(o)
+    );
+
+    if (allowed) return callback(null, true);
+
+    console.log("CORS BLOCKED:", origin);
+    return callback(null, false);
   },
   credentials: true,
-  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Range']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
 };
+
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' })); // limit JSON size
@@ -766,18 +774,27 @@ app.post('/admin/posts/:id/approve', authMiddleware, adminMiddleware, async (req
 // Socket.IO (with Redis adapter if available)
 // -----------------
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-      return callback(new Error('Not allowed by CORS'));
+
+      const allowed = ALLOWED_ORIGINS.some(o =>
+        origin === o || origin.startsWith(o)
+      );
+
+      if (allowed) return callback(null, true);
+
+      console.log("SOCKET CORS BLOCKED:", origin);
+      return callback(null, false);
     },
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
+// Redis adapter (ixtiyoriy)
 (async function attachRedisAdapter() {
   if (!redisAvailable || !redisClient) return;
   try {
@@ -789,26 +806,41 @@ const io = new Server(server, {
   }
 })();
 
+// Socket auth middleware
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
     if (!token) return next(new Error('Token topilmadi'));
+
     const payload = jwt.verify(token, JWT_SECRET);
-    // verify tokenVersion in DB
+
     const user = await User.findById(payload.id).select('+tokenVersion +username +role');
     if (!user) return next(new Error('Token noto‘g‘ri'));
-    if ((user.tokenVersion || 0) !== (payload.tv || 0)) return next(new Error('Token bekor qilingan'));
-    socket.user = { id: String(user._id), username: user.username, role: user.role };
+
+    if ((user.tokenVersion || 0) !== (payload.tv || 0))
+      return next(new Error('Token bekor qilingan'));
+
+    socket.user = {
+      id: String(user._id),
+      username: user.username,
+      role: user.role
+    };
+
     return next();
   } catch (e) {
     return next(new Error('Token noto‘g‘ri'));
   }
 });
 
+// Socket connection
 io.on('connection', socket => {
   const username = socket.user.username;
+
   socket.join(username);
   socket.emit('connected', { msg: 'connected', username });
+
+  console.log("Socket connected:", username);
+
 
   // manage online set (Redis-backed if available)
   (async () => {
