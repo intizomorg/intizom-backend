@@ -653,6 +653,23 @@ app.get('/posts', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+app.delete('/admin/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    await Post.deleteMany({ userId });
+    await Follow.deleteMany({ $or: [{ followerId: userId }, { followingId: userId }] });
+    await Like.deleteMany({ userId });
+    await Message.deleteMany({ $or: [{ from: userId }, { to: userId }] });
+
+    await User.findByIdAndDelete(userId);
+
+    res.json({ msg: 'User to‘liq o‘chirildi' });
+  } catch (e) {
+    console.error('DELETE USER ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
 
 // -----------------
 // Like / Comment endpoints (atomic counters)
@@ -1299,6 +1316,25 @@ app.get('/posts/:id', async (req, res) => {
       user: post.username,
       userId: String(post.userId)
     });
+  } catch (e) {
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+app.get('/admin/media', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const files = [];
+
+    const walk = dir => {
+      fs.readdirSync(dir).forEach(f => {
+        const full = path.join(dir, f);
+        if (fs.statSync(full).isDirectory()) walk(full);
+        else files.push(full.replace(PERSISTENT_MEDIA_ROOT, ''));
+      });
+    };
+
+    walk(PERSISTENT_MEDIA_ROOT);
+
+    res.json(files);
   } catch (e) {
     res.status(500).json({ msg: 'Server xatosi' });
   }
