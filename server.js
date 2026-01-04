@@ -1356,6 +1356,14 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.status(401).json({ msg: 'Unauthorized' });
   }
 });
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    memory: process.memoryUsage().rss
+  });
+});
 
 // -----------------
 // Start server
