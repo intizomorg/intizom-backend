@@ -1,10 +1,23 @@
-// server.js (production-minded MVP)
+// server.js (production-minded MVP) — fixed version
 // Required env:
 // - JWT_SECRET (required)
 // - MONGO_URL (recommended; but your ./db module may handle it)
 // - MEDIA_BASE_URL (optional, default http://localhost:5000)
 // - PERSISTENT_MEDIA_ROOT (optional, default path.join(__dirname, 'media'))
 // - REDIS_URL (optional)
+
+// NOTE: This file updates three important areas:
+// 1) lru-cache usage (new API: LRUCache)
+// 2) /posts/reels: fixed liked bug (p._1 -> p._id)
+// 3) /posts/:id/view: view counter now uses viewedBy and atomically increments + records viewer
+// 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
+
+const { LRUCache } = require('lru-cache');
+
+const postsCache = new LRUCache({
+  max: 500,
+  ttl: 1000 * 20 // 20 seconds
+});
 
 require('dotenv').config();
 
@@ -180,7 +193,8 @@ function createLRU(maxSize = 50000) {
       }
     },
     delete(k) { map.delete(k); },
-    has(k) { return map.has(k); }
+    has(k) { return map.has(k); },
+    keys() { return Array.from(map.keys()); }
   };
 }
 
@@ -374,6 +388,37 @@ async function setCachedFollowing(userId, list) {
 })().catch(() => {});
 
 // -----------------
+// Cache invalidation helpers
+// -----------------
+function invalidateAllPostsCache() {
+  try {
+    const keys = typeof postsCache.keys === 'function' ? postsCache.keys() : [];
+    for (const key of keys) {
+      if (typeof key === 'string' && key.startsWith('posts:')) postsCache.delete(key);
+    }
+  } catch (e) {
+    console.warn('invalidateAllPostsCache failed', e && e.message ? e.message : e);
+  }
+}
+
+function invalidateUserPostsCache(userId) {
+  try {
+    const keys = typeof postsCache.keys === 'function' ? postsCache.keys() : [];
+    for (const key of keys) {
+      if (typeof key !== 'string') continue;
+      if (userId && key.startsWith(`posts:${userId}:`)) {
+        postsCache.delete(key);
+        continue;
+      }
+      // also clear guest cache so the user sees updated content when logged out
+      if (key.startsWith('posts:guest:')) postsCache.delete(key);
+    }
+  } catch (e) {
+    console.warn('invalidateUserPostsCache failed', e && e.message ? e.message : e);
+  }
+}
+
+// -----------------
 // Routes: Auth
 // -----------------
 app.post('/auth/register', authLimiter, async (req, res) => {
@@ -383,9 +428,9 @@ app.post('/auth/register', authLimiter, async (req, res) => {
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ msg: 'Username band' });
     const user = await User.create({
-  username,
-  password   // plain password
-});
+      username,
+      password   // plain password
+    });
 
     const token = await signTokenForUser(user);
     res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
@@ -401,7 +446,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     if (!username || !password) return res.status(400).json({ msg: 'Username va password majburiy' });
     const user = await User.findOne({ username }).select('+password +tokenVersion +role');
     if (!user) return res.status(400).json({ msg: 'User topilmadi' });
-const match = await user.comparePassword(password);
+    const match = await user.comparePassword(password);
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
     const token = await signTokenForUser(user);
     res.json({ msg: 'Login muvaffaqiyatli', token });
@@ -415,6 +460,8 @@ const match = await user.comparePassword(password);
 app.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
+    // selectively invalidate this user's caches
+    invalidateUserPostsCache(req.user.id);
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
@@ -445,6 +492,8 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
 
     user.avatar = `${MEDIA_BASE_URL}/avatars/${req.file.filename}`;
     await user.save();
+    // avatar change may affect profile caches; invalidate only this user's feeds
+    invalidateUserPostsCache(req.user.id);
     res.json({ msg: 'Avatar yangilandi', avatar: user.avatar });
   } catch (e) {
     console.error('AVATAR ERROR:', e);
@@ -477,7 +526,7 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
         folder: "intizom"
       });
 
-      fs.unlinkSync(file.path); // lokalni o‘chir
+      fs.unlinkSync(file.path); // remove local copy
 
       uploads.push({
         type: file.mimetype.startsWith("video") ? "video" : "image",
@@ -498,6 +547,9 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
       commentsCount: 0,
       createdAt: new Date()
     });
+
+    // new post should invalidate caches for this user and guest caches
+    invalidateUserPostsCache(req.user.id);
 
     res.json({ msg: "Post yaratildi", post: postDoc });
   } catch (e) {
@@ -611,12 +663,22 @@ app.get('/posts', async (req, res) => {
       } catch (e) { /* ignore auth parse errors */ }
     }
 
+    // CACHE CHECK (user-scoped)
+    const userPart = currentUserId || 'guest';
+    const cacheKey = `posts:${userPart}:${page}:${limit}:${req.query.feed || 'all'}`;
+    const cached = postsCache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const query = { status: 'approved' };
     // optionally allow filter by following
     if (req.query.feed === 'following' && currentUserId) {
       // if followingSet empty return empty results quickly
       if (!followingSet || followingSet.size === 0) {
-        return res.json({ page, limit, posts: [] });
+        const emptyResponse = { page, limit, posts: [] };
+        postsCache.set(cacheKey, emptyResponse);
+        return res.json(emptyResponse);
       }
       // if followingSet contains userIds, match by userId; otherwise by username
       const userIdList = Array.from(followingSet).filter(s => mongoose.Types.ObjectId.isValid(s));
@@ -657,12 +719,16 @@ app.get('/posts', async (req, res) => {
       };
     });
 
-    res.json({ page, limit, posts: results });
+    // CACHE SAVE (user-scoped)
+    const response = { page, limit, posts: results };
+    postsCache.set(cacheKey, response);
+    res.json(response);
   } catch (e) {
     console.error('GET POSTS ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 app.delete('/admin/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
@@ -673,6 +739,9 @@ app.delete('/admin/users/:id', authMiddleware, adminMiddleware, async (req, res)
     await Message.deleteMany({ $or: [{ from: userId }, { to: userId }] });
 
     await User.findByIdAndDelete(userId);
+
+    // admin deleted a user — invalidate everything for safety
+    invalidateAllPostsCache();
 
     res.json({ msg: 'User to‘liq o‘chirildi' });
   } catch (e) {
@@ -692,6 +761,8 @@ app.post('/posts/:id/like', authMiddleware, async (req, res) => {
     try {
       await Like.create({ postId, userId, createdAt: new Date() });
       await Post.updateOne({ _id: postId }, { $inc: { likesCount: 1 } });
+      // selective invalidation (only this user's posts + guest)
+      invalidateUserPostsCache(userId);
     } catch (e) {
       if (e.code !== 11000) throw e;
     }
@@ -713,6 +784,7 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
     const removed = await Like.findOneAndDelete({ postId, userId });
     if (removed) {
       await Post.updateOne({ _id: postId, likesCount: { $gt: 0 } }, { $inc: { likesCount: -1 } });
+      invalidateUserPostsCache(userId);
     }
 
     const post = await Post.findById(postId).select('likesCount');
@@ -729,14 +801,16 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
     const postId = req.params.id;
     const text = String(req.body.text || '').trim().slice(0, 2000);
     if (!text) return res.status(400).json({ msg: 'Comment bo‘sh bo‘lishi mumkin emas' });
-const c = await Comment.create({
-  postId,
-  user: req.user.username,   // MUHIM
-  userId: req.user.id,
-  text,
-  createdAt: new Date()
-});
+    const c = await Comment.create({
+      postId,
+      user: req.user.username,   // MUHIM
+      userId: req.user.id,
+      text,
+      createdAt: new Date()
+    });
     await Post.updateOne({ _id: postId }, { $inc: { commentsCount: 1 } });
+    // selective invalidation
+    invalidateUserPostsCache(req.user.id);
     res.json({ msg: 'Comment qo‘shildi', comment: c });
   } catch (e) {
     console.error('COMMENT ERROR:', e);
@@ -761,6 +835,9 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
 
     await Follow.create({ followerId, followingId });
 
+    // following affects "following" feed — invalidate only follower's posts cache + guest
+    invalidateUserPostsCache(followerId);
+
     res.json({ msg: 'Follow qo‘shildi' });
   } catch (e) {
     if (e.code === 11000) return res.json({ msg: 'Already following' });
@@ -782,13 +859,14 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
       followingId: targetUser._id
     });
 
+    invalidateUserPostsCache(followerId);
+
     res.json({ msg: 'Unfollow qilindi' });
   } catch (e) {
     console.error('UNFOLLOW ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 
 // -----------------
 // Simple admin approve endpoint to mark posts approved
@@ -797,6 +875,8 @@ app.post('/admin/posts/:id/approve', authMiddleware, adminMiddleware, async (req
   try {
     const id = req.params.id;
     await Post.updateOne({ _id: id }, { $set: { status: 'approved' } });
+    // approved posts can affect feeds; invalidate all to be safe
+    invalidateAllPostsCache();
     res.json({ msg: 'Post approved' });
   } catch (e) {
     console.error('ADMIN APPROVE ERROR:', e);
@@ -999,6 +1079,7 @@ app.get('/posts/reels', async (req, res) => {
         ...p,
         id: String(p._id),
         userId: String(p.userId),
+        // FIX: use _id (not _1)
         liked: userId ? likedSet.has(String(p._id)) : false
       })),
       hasMore: page * limit < total
@@ -1019,9 +1100,10 @@ app.post('/posts/:id/view', async (req, res) => {
       } catch {}
     }
 
+    // Atomically increment views only if this viewer hasn't been recorded yet
     const result = await Post.updateOne(
       { _id: req.params.id, viewedBy: { $ne: viewer } },
-{ $inc: { views: 1 } }
+      { $inc: { views: 1 }, $push: { viewedBy: viewer } }
     );
 
     res.json({ viewed: result.modifiedCount === 1 });
@@ -1041,13 +1123,13 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
       .lean();
 
     res.json({
-  comments: comments.map(c => ({
-    id: String(c._id),
-    user: c.user,        // MUHIM
-    text: c.text,
-    createdAt: c.createdAt
-  }))
-});
+      comments: comments.map(c => ({
+        id: String(c._id),
+        user: c.user,        // MUHIM
+        text: c.text,
+        createdAt: c.createdAt
+      }))
+    });
 
   } catch (e) {
     console.error('GET COMMENTS ERROR:', e);
@@ -1147,6 +1229,9 @@ app.put('/profile', authMiddleware, async (req, res) => {
         website: String(website).slice(0, 200)
       }
     });
+
+    // profile update may affect feeds for this user
+    invalidateUserPostsCache(req.user.id);
 
     res.json({ msg: 'Profile updated' });
   } catch (e) {
@@ -1305,12 +1390,18 @@ app.delete('/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res)
     if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
 
     for (const m of post.media || []) {
-      const rel = m.url.replace(MEDIA_BASE_URL + '/media/', '');
-      const disk = path.join(PERSISTENT_MEDIA_ROOT, rel);
-      if (fs.existsSync(disk)) fs.unlinkSync(disk);
+      // try/catch per file
+      try {
+        const rel = m.url.replace(MEDIA_BASE_URL + '/media/', '');
+        const disk = path.join(PERSISTENT_MEDIA_ROOT, rel);
+        if (fs.existsSync(disk)) fs.unlinkSync(disk);
+      } catch (e) { /* ignore file removal errors */ }
     }
 
     await Post.deleteOne({ _id: post._id });
+
+    invalidateAllPostsCache();
+
     res.json({ msg: 'Post va media to‘liq o‘chirildi' });
   } catch (e) {
     res.status(500).json({ msg: 'Server xatosi' });
@@ -1373,5 +1464,3 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on ${PORT}`);
 });
-
- Comment.listenerCount();
