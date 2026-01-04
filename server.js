@@ -21,7 +21,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Server } = require('socket.io');
 const mime = require('mime-types');
-const { fileTypeFromFile } = require('file-type');
+const FileType = require('file-type');
 const mongoose = require('mongoose');
 
 const app = express();
@@ -198,14 +198,15 @@ function generateFilename(originalname) {
 
 async function validateFileMagic(filePath, allowedPrefixes = []) {
   try {
-    const ft = await fileTypeFromFile(filePath);
+    const ft = await FileType.fromFile(filePath);
     if (!ft) return false;
     if (!allowedPrefixes || allowedPrefixes.length === 0) return !!ft.mime;
     return allowedPrefixes.some(pref => ft.mime.startsWith(pref));
-  } catch (e) {
+  } catch {
     return false;
   }
 }
+
 
 function safeResolveWithin(base, file) {
   const baseResolved = path.resolve(base);
