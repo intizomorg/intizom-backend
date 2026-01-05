@@ -39,6 +39,7 @@ const mongoose = require('mongoose');
 
 const app = express();
 const connectDB = require("./config/connectDB");
+if (!global.onlineUsers) global.onlineUsers = new Set();
 
 // -----------------
 // Env + basic checks
@@ -951,6 +952,9 @@ io.on('connection', socket => {
   const username = socket.user.username;
 
   socket.join(username);
+  global.onlineUsers.add(username);
+io.emit('online_users', Array.from(global.onlineUsers));
+
   socket.emit('connected', { msg: 'connected', username });
 
   console.log("Socket connected:", username);
@@ -972,6 +976,7 @@ io.on('connection', socket => {
   })();
 
   socket.on('disconnect', async () => {
+    
     try {
       if (redisAvailable && redisClient) {
         await redisClient.srem('online_users', username);
@@ -983,6 +988,8 @@ io.on('connection', socket => {
       }
     } catch (e) { console.warn('online remove failed', e.message || e); }
   });
+global.onlineUsers.delete(username);
+io.emit('online_users', Array.from(global.onlineUsers));
 
   socket.on('typing', (data) => {
     const { to } = data || {};
@@ -1448,6 +1455,15 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.status(401).json({ msg: 'Unauthorized' });
   }
 });
+app.get('/users/online', authMiddleware, (req, res) => {
+  res.json(Array.from(global.onlineUsers));
+});
+
+app.get('/users/all', authMiddleware, async (req, res) => {
+  const users = await User.find().select('username avatar').lean();
+  res.json(users);
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
