@@ -949,6 +949,11 @@ io.use(async (socket, next) => {
 
 // Socket connection
 io.on('connection', socket => {
+  onlineCount++;
+socket.on('disconnect', () => {
+  onlineCount--;
+});
+
   const username = socket.user.username;
 
   socket.join(username);
@@ -1447,6 +1452,20 @@ app.get('/admin/media', authMiddleware, adminMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+let onlineCount = 0;
+
+app.get('/stats', async (req, res) => {
+  try {
+    const usersCount = await User.countDocuments();
+    res.json({
+      totalUsers: usersCount,
+      onlineUsers: onlineCount
+    });
+  } catch (e) {
+    res.status(500).json({ totalUsers: 0, onlineUsers: 0 });
+  }
+});
+
 app.get('/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('username role');
