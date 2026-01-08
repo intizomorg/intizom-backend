@@ -38,6 +38,7 @@ const { Server } = require('socket.io');
 const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
+const adminDomainOnly = require('./middlewares/adminDomainOnly');
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -896,19 +897,23 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
 
 // -----------------
 // Simple admin approve endpoint to mark posts approved
-// -----------------
-app.post('/admin/posts/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const id = req.params.id;
-    await Post.updateOne({ _id: id }, { $set: { status: 'approved' } });
-    // approved posts can affect feeds; invalidate all to be safe
-    invalidateAllPostsCache();
-    res.json({ msg: 'Post approved' });
-  } catch (e) {
-    console.error('ADMIN APPROVE ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+app.post('/admin/posts/:id/approve',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  async (req, res) => {
+    try {
+      const id = req.params.id;
+      await Post.updateOne({ _id: id }, { $set: { status: 'approved' } });
+      invalidateAllPostsCache();
+      res.json({ msg: 'Post approved' });
+    } catch (e) {
+      console.error('ADMIN APPROVE ERROR:', e);
+      res.status(500).json({ msg: 'Server xatosi' });
+    }
   }
-});
+);
+
 
 // -----------------
 // Socket.IO (with Redis adapter if available)
