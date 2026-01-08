@@ -492,14 +492,6 @@ app.post('/auth/logout', authMiddleware, async (req, res) => {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
     // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
-
-    // CLEAR httpOnly cookie so browser no longer sends old token
-    res.clearCookie('access_token', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'Strict'
-    });
-
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
@@ -683,11 +675,10 @@ app.get('/posts', async (req, res) => {
     let currentUsername = null;
     let followingSet = new Set();
 
-    // MOVE AUTH TO COOKIE (avoid using Authorization header)
-    let token = null;
-    if (req.cookies && req.cookies.access_token) token = req.cookies.access_token;
-    if (token) {
+    const auth = req.headers.authorization;
+    if (auth) {
       try {
+        const token = auth.split(' ')[1];
         const payload = jwt.verify(token, JWT_SECRET);
         currentUserId = payload.id;
         currentUsername = payload.username;
@@ -1101,11 +1092,11 @@ app.get('/posts/reels', async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page || '1'));
     const limit = Math.max(1, Math.min(20, parseInt(req.query.limit || '5')));
 
-    // SWITCH TO COOKIE-BASED AUTH (avoid Authorization header)
     let userId = null;
-    if (req.cookies && req.cookies.access_token) {
+    if (req.headers.authorization) {
       try {
-        const payload = jwt.verify(req.cookies.access_token, JWT_SECRET);
+        const token = req.headers.authorization.split(' ')[1];
+        const payload = jwt.verify(token, JWT_SECRET);
         userId = payload.id;
       } catch {}
     }
