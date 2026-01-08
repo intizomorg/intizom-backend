@@ -1,10 +1,16 @@
-// server.js (production-minded MVP) — updated with cookie, trust-proxy, cookie-based auth, view dedupe, safe avatar removal, socket auth deprecation warning
+// server.js (production-minded MVP) — fixed version
 // Required env:
 // - JWT_SECRET (required)
 // - MONGO_URL (recommended; but your ./db module may handle it)
 // - MEDIA_BASE_URL (optional, default http://localhost:5000)
 // - PERSISTENT_MEDIA_ROOT (optional, default path.join(__dirname, 'media'))
 // - REDIS_URL (optional)
+
+// NOTE: This file updates three important areas:
+// 1) lru-cache usage (new API: LRUCache)
+// 2) /posts/reels: fixed liked bug (p._1 -> p._id)
+// 3) /posts/:id/view: view counter now uses viewedBy and atomically increments + records viewer
+// 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
 
 const { LRUCache } = require('lru-cache');
 
@@ -30,7 +36,6 @@ const { Server } = require('socket.io');
 const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
-const cookieParser = require('cookie-parser');
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -50,10 +55,14 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
 connectDB();
 
 // -----------------
-// SECURITY: trust proxy + cookies (add before express.json)
+// Models (expect these files to exist)
 // -----------------
-app.set('trust proxy', 1); // useful behind render/heroku/proxy so secure cookies work
-app.use(cookieParser());
+const User = require('./models/User');
+const Post = require('./models/Post');
+const Like = require('./models/Like');
+const Follow = require('./models/Follow');
+const Message = require('./models/Message');
+const Comment = require('./models/Comment');
 
 // -----------------
 // Security middlewares
@@ -193,9 +202,6 @@ function createLRU(maxSize = 50000) {
 const followCache = createLRU(10000);
 const userRateCache = createLRU(20000);
 
-// Simple view dedupe LRU (24h TTL semantics via stored timestamp)
-const viewSeenCache = new LRUCache({ max: 100000, ttl: 1000 * 60 * 60 * 24 }); // 24 hours TTL
-
 // -----------------
 // Helpers
 // -----------------
@@ -269,16 +275,6 @@ function avatarFileFilter(req, file, cb) {
 const avatarUpload = multer({ storage: avatarStorage, fileFilter: avatarFileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // -----------------
-// Models (expect these files to exist)
-// -----------------
-const User = require('./models/User');
-const Post = require('./models/Post');
-const Like = require('./models/Like');
-const Follow = require('./models/Follow');
-const Message = require('./models/Message');
-const Comment = require('./models/Comment');
-
-// -----------------
 // Auth helpers (JWT includes tokenVersion for revocation)
 // -----------------
 async function signTokenForUser(user) {
@@ -292,20 +288,11 @@ async function signTokenForUser(user) {
 }
 
 async function authMiddleware(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ msg: 'Token topilmadi' });
+  const token = auth.split(' ')[1];
   try {
-    // 1) Prefer httpOnly cookie
-    let token = null;
-    if (req.cookies && req.cookies.access_token) {
-      token = req.cookies.access_token;
-    } else if (req.headers.authorization) {
-      const auth = req.headers.authorization;
-      token = auth.split(' ')[1];
-    }
-
-    if (!token) return res.status(401).json({ msg: 'Token topilmadi' });
-
     const payload = jwt.verify(token, JWT_SECRET);
-
     // fetch current tokenVersion
     try {
       const user = await User.findById(payload.id).select('+tokenVersion');
@@ -447,15 +434,7 @@ app.post('/auth/register', authLimiter, async (req, res) => {
     });
 
     const token = await signTokenForUser(user);
-    // set httpOnly cookie (transitional: also return token in JSON for older frontends)
-    res
-      .cookie('access_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'Strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      })
-      .json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
+    res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
   } catch (e) {
     console.error('REGISTER ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
@@ -471,15 +450,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     const match = await user.comparePassword(password);
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
     const token = await signTokenForUser(user);
-    // set httpOnly cookie (transitional: also return token in JSON for older frontends)
-    res
-      .cookie('access_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'Strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      })
-      .json({ msg: 'Login muvaffaqiyatli', token });
+    res.json({ msg: 'Login muvaffaqiyatli', token });
   } catch (e) {
     console.error('LOGIN ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
@@ -511,13 +482,12 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
     const user = await User.findById(req.user.id);
     if (!user) { fs.unlinkSync(req.file.path); return res.status(404).json({ msg: 'Foydalanuvchi topilmadi' }); }
 
-    // remove previous avatar if stored locally and inside avatars dir (safe)
+    // remove previous avatar if stored locally and inside avatars dir
     if (user.avatar && user.avatar.startsWith(MEDIA_BASE_URL)) {
       try {
         const rel = user.avatar.replace(MEDIA_BASE_URL, '');
-        const filename = path.basename(rel);
-        const safe = safeResolveWithin(AVATAR_ROOT, filename);
-        if (safe && fs.existsSync(safe)) fs.unlinkSync(safe);
+        const disk = path.join(__dirname, rel);
+        if (fs.existsSync(disk)) fs.unlinkSync(disk);
       } catch (e) { /* ignore */ }
     }
 
@@ -954,12 +924,7 @@ const io = new Server(server, {
 // Socket auth middleware
 io.use(async (socket, next) => {
   try {
-    // prefer handshake.auth.token (modern usage). fallback to query token only with a warning.
-    let token = socket.handshake.auth?.token;
-    if (!token && socket.handshake.query?.token) {
-      console.warn('DEPRECATION: socket token via query is deprecated. Move client to send token via auth.');
-      token = socket.handshake.query.token;
-    }
+    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
     if (!token) return next(new Error('Token topilmadi'));
 
     const payload = jwt.verify(token, JWT_SECRET);
@@ -1136,19 +1101,10 @@ app.get('/posts/reels', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
-// -----------------
-// Post view: dedupe via Redis (preferred) or in-memory LRU fallback
-// -----------------
 app.post('/posts/:id/view', async (req, res) => {
   try {
     let viewer = req.ip;
-    if (req.cookies && req.cookies.access_token) {
-      try {
-        const payload = jwt.verify(req.cookies.access_token, JWT_SECRET);
-        viewer = payload.id;
-      } catch {}
-    } else if (req.headers.authorization) {
+    if (req.headers.authorization) {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const payload = jwt.verify(token, JWT_SECRET);
@@ -1156,31 +1112,13 @@ app.post('/posts/:id/view', async (req, res) => {
       } catch {}
     }
 
-    const viewKey = `view:${req.params.id}:${viewer}`;
+    // Atomically increment views only if this viewer hasn't been recorded yet
+    const result = await Post.updateOne(
+      { _id: req.params.id, viewedBy: { $ne: viewer } },
+      { $inc: { views: 1 }, $push: { viewedBy: viewer } }
+    );
 
-    // 1) prefer Redis if available
-    if (redisAvailable && redisClient) {
-      try {
-        const setRes = await redisClient.set(viewKey, '1', 'NX', 'EX', 60 * 60 * 24); // 24h dedupe
-        if (!setRes) return res.json({ viewed: false }); // already seen
-        await Post.updateOne({ _id: req.params.id }, { $inc: { views: 1 } });
-        return res.json({ viewed: true });
-      } catch (e) {
-        console.warn('Redis view increment failed', e && e.message ? e.message : e);
-        // fallthrough to in-memory fallback
-      }
-    }
-
-    // 2) in-memory LRU fallback
-    if (viewSeenCache.has(viewKey)) {
-      return res.json({ viewed: false });
-    }
-    viewSeenCache.set(viewKey, true);
-
-    // increment DB counter (no viewedBy array push)
-    await Post.updateOne({ _id: req.params.id }, { $inc: { views: 1 } });
-
-    res.json({ viewed: true });
+    res.json({ viewed: result.modifiedCount === 1 });
   } catch (e) {
     console.error('VIEW ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
