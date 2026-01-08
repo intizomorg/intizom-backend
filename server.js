@@ -44,6 +44,7 @@ const adminIpOnly = require('./middlewares/adminIpOnly');
 const app = express();
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
+app.set('trust proxy', true);
 
 // ADDED: mount adminDomainOnly for all /admin routes
 app.use('/admin', adminDomainOnly);
