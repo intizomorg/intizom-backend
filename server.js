@@ -44,6 +44,9 @@ const app = express();
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
 
+// ADDED: mount adminDomainOnly for all /admin routes
+app.use('/admin', adminDomainOnly);
+
 // -----------------
 // Env + basic checks
 // -----------------
@@ -56,6 +59,7 @@ const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || `http://localhost:${process
 const PERSISTENT_MEDIA_ROOT = process.env.PERSISTENT_MEDIA_ROOT || path.join(__dirname, 'media');
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()).filter(Boolean);
 connectDB();
+
 
 // -----------------
 // Models (expect these files to exist)
@@ -898,7 +902,6 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
 // -----------------
 // Simple admin approve endpoint to mark posts approved
 app.post('/admin/posts/:id/approve',
-  adminDomainOnly,
   authMiddleware,
   adminMiddleware,
   async (req, res) => {
@@ -1129,7 +1132,7 @@ app.get('/posts/reels', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-// Attach per-route view limiter (prevents scripted view inflation)
+ // Attach per-route view limiter (prevents scripted view inflation)
 app.post('/posts/:id/view', viewLimiter, async (req, res) => {
   try {
     let viewer = req.ip;
@@ -1330,7 +1333,7 @@ app.get('/messages/:username', authMiddleware, async (req, res) => {
 
     res.json(msgs);
   } catch (e) {
-    console.error('GET /messages ERROR', e);
+    console.error('GET /messages ERROR:', e);
     res.status(500).json([]);
   }
 });
