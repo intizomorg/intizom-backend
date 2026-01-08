@@ -11,6 +11,8 @@
 // 2) /posts/reels: fixed liked bug (p._1 -> p._id)
 // 3) /posts/:id/view: view counter now uses viewedBy and atomically increments + records viewer
 // 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
+// 5) Rate limiting: moved from global to per-route (auth + api + view-specific limiter)
+// 6) Avatar deletion: protected with safeResolveWithin
 
 const { LRUCache } = require('lru-cache');
 
@@ -96,13 +98,36 @@ app.use(express.json({ limit: '1mb' })); // limit JSON size
 // -----------------
 // Rate limiting
 // -----------------
-const globalLimiter = rateLimit({ windowMs: 60 * 1000, max: 300 });
-app.use(globalLimiter);
+// NOTE: removed global limiter to avoid throttling media/socket/admin routes
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
-  message: { msg: 'Too many auth attempts, try again later' }
+  message: { msg: 'Too many auth attempts, try again later' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Apply auth limiter only to auth routes
+app.use('/auth', authLimiter);
+
+// API limiter for user-driven endpoints (posts/follow/messages)
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 150,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/posts', apiLimiter);
+app.use('/follow', apiLimiter);
+app.use('/messages', apiLimiter);
+
+// Specific limiter for view endpoint (prevents scripted view inflation)
+const viewLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
 // -----------------
@@ -482,12 +507,12 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
     const user = await User.findById(req.user.id);
     if (!user) { fs.unlinkSync(req.file.path); return res.status(404).json({ msg: 'Foydalanuvchi topilmadi' }); }
 
-    // remove previous avatar if stored locally and inside avatars dir
+    // remove previous avatar if stored locally and inside avatars dir (safe)
     if (user.avatar && user.avatar.startsWith(MEDIA_BASE_URL)) {
       try {
-        const rel = user.avatar.replace(MEDIA_BASE_URL, '');
-        const disk = path.join(__dirname, rel);
-        if (fs.existsSync(disk)) fs.unlinkSync(disk);
+        const rel = user.avatar.replace(MEDIA_BASE_URL + '/avatars/', '');
+        const disk = safeResolveWithin(AVATAR_ROOT, rel);
+        if (disk && fs.existsSync(disk)) fs.unlinkSync(disk);
       } catch (e) { /* ignore */ }
     }
 
@@ -947,18 +972,18 @@ io.use(async (socket, next) => {
   }
 });
 
+// manage online count
+let onlineCount = 0;
+
 // Socket connection
 io.on('connection', socket => {
   onlineCount++;
-socket.on('disconnect', () => {
-  onlineCount--;
-});
 
   const username = socket.user.username;
 
   socket.join(username);
   global.onlineUsers.add(username);
-io.emit('online_users', Array.from(global.onlineUsers));
+  io.emit('online_users', Array.from(global.onlineUsers));
 
   socket.emit('connected', { msg: 'connected', username });
 
@@ -981,7 +1006,7 @@ io.emit('online_users', Array.from(global.onlineUsers));
   })();
 
   socket.on('disconnect', async () => {
-    
+    onlineCount--;
     try {
       if (redisAvailable && redisClient) {
         await redisClient.srem('online_users', username);
@@ -993,8 +1018,6 @@ io.emit('online_users', Array.from(global.onlineUsers));
       }
     } catch (e) { console.warn('online remove failed', e.message || e); }
   });
-global.onlineUsers.delete(username);
-io.emit('online_users', Array.from(global.onlineUsers));
 
   socket.on('typing', (data) => {
     const { to } = data || {};
@@ -1101,7 +1124,8 @@ app.get('/posts/reels', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-app.post('/posts/:id/view', async (req, res) => {
+// Attach per-route view limiter (prevents scripted view inflation)
+app.post('/posts/:id/view', viewLimiter, async (req, res) => {
   try {
     let viewer = req.ip;
     if (req.headers.authorization) {
@@ -1452,7 +1476,21 @@ app.get('/admin/media', authMiddleware, adminMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-let onlineCount = 0;
+
+app.get('/posts/:id', async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id).lean();
+    if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
+    res.json({
+      ...post,
+      id: String(post._id),
+      user: post.username,
+      userId: String(post.userId)
+    });
+  } catch (e) {
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
 
 app.get('/stats', async (req, res) => {
   try {
