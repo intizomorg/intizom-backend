@@ -2,12 +2,15 @@ const mongoose = require("mongoose");
 
 async function connectDB() {
   try {
-    if (!process.env.MONGO_URI) {
-      console.error("FATAL: MONGO_URI missing");
+    const mongoUri =
+      process.env.MONGO_URI_APP || process.env.MONGO_URI;
+
+    if (!mongoUri) {
+      console.error("FATAL: No MongoDB URI provided");
       process.exit(1);
     }
 
-    await mongoose.connect(process.env.MONGO_URI, {
+    await mongoose.connect(mongoUri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000
