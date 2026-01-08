@@ -47,8 +47,6 @@ if (!global.onlineUsers) global.onlineUsers = new Set();
 app.set('trust proxy', true);
 
 // ADDED: mount adminDomainOnly for all /admin routes
-app.use('/admin', adminDomainOnly);
-app.use('/admin', adminIpOnly);
 
 // -----------------
 // Env + basic checks
@@ -905,9 +903,12 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
 // -----------------
 // Simple admin approve endpoint to mark posts approved
 app.post('/admin/posts/:id/approve',
+  adminDomainOnly,
   authMiddleware,
   adminMiddleware,
+  adminIpOnly,
   async (req, res) => {
+
     try {
       const id = req.params.id;
       await Post.updateOne({ _id: id }, { $set: { status: 'approved' } });
