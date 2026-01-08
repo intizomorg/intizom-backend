@@ -39,6 +39,7 @@ const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
+const adminIpOnly = require('./middlewares/adminIpOnly');
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -46,6 +47,7 @@ if (!global.onlineUsers) global.onlineUsers = new Set();
 
 // ADDED: mount adminDomainOnly for all /admin routes
 app.use('/admin', adminDomainOnly);
+app.use('/admin', adminIpOnly);
 
 // -----------------
 // Env + basic checks
