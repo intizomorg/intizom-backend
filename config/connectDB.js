@@ -9,6 +9,10 @@ async function connectDB() {
       console.error("FATAL: No MongoDB URI provided");
       process.exit(1);
     }
+console.log(
+  "MongoDB URI source:",
+  process.env.MONGO_URI_APP ? "MONGO_URI_APP" : "MONGO_URI"
+);
 
     await mongoose.connect(mongoUri, {
       maxPoolSize: 10,
