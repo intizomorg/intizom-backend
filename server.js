@@ -761,7 +761,12 @@ app.get('/posts', async (req, res) => {
   }
 });
 
-app.delete('/admin/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/admin/users/:id',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -1357,7 +1362,7 @@ app.post('/messages', authMiddleware, async (req, res) => {
 
     res.json({ message: msg });
   } catch (e) {
-    console.error('POST /messages ERROR', e);
+    console.error('POST /messages ERROR:', e);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1415,7 +1420,12 @@ app.put('/auth/change-password', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-app.get('/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/admin/posts',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1'));
     const limit = Math.min(50, parseInt(req.query.limit || '20'));
@@ -1432,7 +1442,12 @@ app.get('/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
-app.delete('/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/admin/posts/:id',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
@@ -1469,7 +1484,12 @@ app.get('/posts/:id', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-app.get('/admin/media', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/admin/media',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
   try {
     const files = [];
 
