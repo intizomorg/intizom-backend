@@ -40,6 +40,8 @@ const FileType = require('file-type');
 const mongoose = require('mongoose');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
+const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -100,6 +102,9 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' })); // limit JSON size
+
+// ADDED: cookie parser so server can set/clear HttpOnly cookies
+app.use(cookieParser());
 
 // -----------------
 // Rate limiting
@@ -465,28 +470,75 @@ app.post('/auth/register', authLimiter, async (req, res) => {
     });
 
     const token = await signTokenForUser(user);
+
+    // set HttpOnly cookie alongside JSON token
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      path: '/'
+    });
+
     res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
   } catch (e) {
     console.error('REGISTER ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ msg: 'Username va password majburiy' });
+    if (!username || !password)
+      return res.status(400).json({ msg: 'Username va password majburiy' });
+
     const user = await User.findOne({ username }).select('+password +tokenVersion +role');
     if (!user) return res.status(400).json({ msg: 'User topilmadi' });
+
+    // Faqat adminlar uchun qattiq limiter
+    if (user.role === 'admin') {
+      return adminLoginLimiter(req, res, async () => {
+        const match = await user.comparePassword(password);
+        if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
+
+        const token = await signTokenForUser(user);
+
+        // set HttpOnly cookie for admin login as well
+        res.cookie('token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+          path: '/'
+        });
+
+        return res.json({ msg: 'Login muvaffaqiyatli', token });
+      });
+    }
+
+    // Oddiy userlar uchun eski tartib
     const match = await user.comparePassword(password);
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
+
     const token = await signTokenForUser(user);
+
+    // set HttpOnly cookie for normal user
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/'
+    });
+
     res.json({ msg: 'Login muvaffaqiyatli', token });
+
   } catch (e) {
     console.error('LOGIN ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 // logout / revoke tokens for user by incrementing tokenVersion
 app.post('/auth/logout', authMiddleware, async (req, res) => {
@@ -494,6 +546,10 @@ app.post('/auth/logout', authMiddleware, async (req, res) => {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
     // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
+
+    // clear HttpOnly cookie set by server
+    res.clearCookie('token', { path: '/' });
+
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
