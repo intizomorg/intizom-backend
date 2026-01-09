@@ -41,7 +41,6 @@ const mongoose = require('mongoose');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
-const cookieParser = require('cookie-parser');
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -102,9 +101,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' })); // limit JSON size
-
-// ADDED: cookie parser so server can set/clear HttpOnly cookies
-app.use(cookieParser());
 
 // -----------------
 // Rate limiting
@@ -470,16 +466,6 @@ app.post('/auth/register', authLimiter, async (req, res) => {
     });
 
     const token = await signTokenForUser(user);
-
-    // set HttpOnly cookie alongside JSON token
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      path: '/'
-    });
-
     res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
   } catch (e) {
     console.error('REGISTER ERROR:', e);
@@ -502,16 +488,6 @@ app.post('/auth/login', authLimiter, async (req, res) => {
         if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
 
         const token = await signTokenForUser(user);
-
-        // set HttpOnly cookie for admin login as well
-        res.cookie('token', token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-          path: '/'
-        });
-
         return res.json({ msg: 'Login muvaffaqiyatli', token });
       });
     }
@@ -521,16 +497,6 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
 
     const token = await signTokenForUser(user);
-
-    // set HttpOnly cookie for normal user
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/'
-    });
-
     res.json({ msg: 'Login muvaffaqiyatli', token });
 
   } catch (e) {
@@ -546,10 +512,6 @@ app.post('/auth/logout', authMiddleware, async (req, res) => {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
     // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
-
-    // clear HttpOnly cookie set by server
-    res.clearCookie('token', { path: '/' });
-
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
