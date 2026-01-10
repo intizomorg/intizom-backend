@@ -41,6 +41,8 @@ const mongoose = require('mongoose');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
+const cookieParser = require("cookie-parser");
+app.use(cookieParser());
 
 const app = express();
 const connectDB = require("./config/connectDB");
@@ -320,9 +322,9 @@ async function signTokenForUser(user) {
 }
 
 async function authMiddleware(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth) return res.status(401).json({ msg: 'Token topilmadi' });
-  const token = auth.split(' ')[1];
+  const token = req.cookies?.token;
+  if (!token) return res.status(401).json({ msg: 'Login qiling' });
+
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     // fetch current tokenVersion
@@ -457,21 +459,31 @@ function invalidateUserPostsCache(userId) {
 app.post('/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ msg: 'Username va password majburiy' });
+    if (!username || !password)
+      return res.status(400).json({ msg: 'Username va password majburiy' });
+
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ msg: 'Username band' });
-    const user = await User.create({
-      username,
-      password   // plain password
-    });
+
+    const user = await User.create({ username, password });
 
     const token = await signTokenForUser(user);
-    res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username }, token });
+
+    // TOKENNI JSON QILIB QAYTARMAYMIZ — COOKIE QILAMIZ
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username } });
   } catch (e) {
     console.error('REGISTER ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -481,23 +493,20 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     const user = await User.findOne({ username }).select('+password +tokenVersion +role');
     if (!user) return res.status(400).json({ msg: 'User topilmadi' });
 
-    // Faqat adminlar uchun qattiq limiter
-    if (user.role === 'admin') {
-      return adminLoginLimiter(req, res, async () => {
-        const match = await user.comparePassword(password);
-        if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
-
-        const token = await signTokenForUser(user);
-        return res.json({ msg: 'Login muvaffaqiyatli', token });
-      });
-    }
-
-    // Oddiy userlar uchun eski tartib
     const match = await user.comparePassword(password);
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
 
     const token = await signTokenForUser(user);
-    res.json({ msg: 'Login muvaffaqiyatli', token });
+
+    // TOKEN endi HttpOnly cookie bo‘ladi
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({ msg: 'Login muvaffaqiyatli' });
 
   } catch (e) {
     console.error('LOGIN ERROR:', e);
@@ -980,11 +989,11 @@ const io = new Server(server, {
     console.warn('Socket.IO adapter error', e.message || e);
   }
 })();
-
-// Socket auth middleware
+// Socket auth middleware (token faqat cookie'dan olinadi)
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const cookie = socket.request.headers.cookie || "";
+    const token = cookie.match(/token=([^;]+)/)?.[1];
     if (!token) return next(new Error('Token topilmadi'));
 
     const payload = jwt.verify(token, JWT_SECRET);
@@ -1006,6 +1015,7 @@ io.use(async (socket, next) => {
     return next(new Error('Token noto‘g‘ri'));
   }
 });
+
 
 // manage online count
 let onlineCount = 0;
