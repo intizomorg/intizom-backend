@@ -470,13 +470,14 @@ app.post('/auth/register', authLimiter, async (req, res) => {
     const token = await signTokenForUser(user);
 
     // TOKENNI JSON QILIB QAYTARMAYMIZ — COOKIE QILAMIZ
-    res.cookie("token", token, {
+   res.cookie("token", token, {
   httpOnly: true,
   secure: true,
   sameSite: "none",
   domain: ".intizom.org",
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
+
 
 
     res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username } });
@@ -508,6 +509,8 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   domain: ".intizom.org",
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
+
+
 
 
     res.json({ msg: 'Login muvaffaqiyatli' });
