@@ -82,26 +82,15 @@ app.use(helmet({
   contentSecurityPolicy: false // leave more control to frontend for video embeds; tune CSP in production
 }));
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
+app.use(cors({
+  origin: [
+    "https://www.intizom.org",
+    "https://api.intizom.org",
+    "https://admin-api.intizom.org"
+  ],
+  credentials: true
+}));
 
-    const allowed = ALLOWED_ORIGINS.some(o =>
-      origin === o || origin.startsWith(o)
-    );
-
-    if (allowed) return callback(null, true);
-
-    console.log("CORS BLOCKED:", origin);
-    return callback(null, false);
-  },
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
-  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
-};
-
-
-app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' })); // limit JSON size
 
 // -----------------
