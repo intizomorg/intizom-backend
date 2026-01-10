@@ -13,9 +13,6 @@
 // 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
 // 5) Rate limiting: moved from global to per-route (auth + api + view-specific limiter)
 // 6) Avatar deletion: protected with safeResolveWithin
-require('https').get('https://api.ipify.org', r => {
-  r.on('data', ip => console.log('RENDER OUTBOUND IP:', ip.toString()));
-});
 
 const { LRUCache } = require('lru-cache');
 
