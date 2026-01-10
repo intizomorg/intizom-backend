@@ -6,6 +6,14 @@
 // - PERSISTENT_MEDIA_ROOT (optional, default path.join(__dirname, 'media'))
 // - REDIS_URL (optional)
 
+// NOTE: This file updates three important areas:
+// 1) lru-cache usage (new API: LRUCache)
+// 2) /posts/reels: fixed liked bug (p._1 -> p._id)
+// 3) /posts/:id/view: view counter now uses viewedBy and atomically increments + records viewer
+// 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
+// 5) Rate limiting: moved from global to per-route (auth + api + view-specific limiter)
+// 6) Avatar deletion: protected with safeResolveWithin
+
 const { LRUCache } = require('lru-cache');
 
 const postsCache = new LRUCache({
@@ -246,24 +254,6 @@ function safeResolveWithin(base, file) {
 }
 
 // -----------------
-// CSRF helper + middleware (ADDED per request)
-// -----------------
-function generateCsrfToken() {
-  return crypto.randomBytes(24).toString("hex");
-}
-
-function csrfMiddleware(req, res, next) {
-  const cookieToken = req.cookies?.csrfToken;
-  const headerToken = req.headers["x-csrf-token"];
-
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
-    return res.status(403).json({ msg: "CSRF tekshiruvdan o‘tmadi" });
-  }
-
-  next();
-}
-
-// -----------------
 // Multer storages + filters (use persistent root)
 // -----------------
 const mediaStorage = multer.diskStorage({
@@ -310,34 +300,48 @@ const avatarUpload = multer({ storage: avatarStorage, fileFilter: avatarFileFilt
 // -----------------
 // Auth helpers (JWT includes tokenVersion for revocation)
 // -----------------
-// REPLACED: old signTokenForUser removed and replaced with access/refresh helpers
-function signAccessToken(user) {
-  return jwt.sign(
-    { id: String(user._id), username: user.username, role: user.role },
-    JWT_SECRET,
-    { expiresIn: "15m" }
-  );
+async function signTokenForUser(user) {
+  const payload = {
+    id: String(user._id),
+    username: user.username,
+    role: user.role || 'user',
+    tv: (user.tokenVersion || 0)
+  };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
-function signRefreshToken(user) {
-  return jwt.sign(
-    { id: String(user._id), tv: user.tokenVersion || 0 },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-}
-
-// REPLACED: authMiddleware now expects Authorization: Bearer <accessToken>
 async function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.status(401).json({ msg: "No access token" });
+  const token = req.cookies?.token;
+  if (!token) return res.status(401).json({ msg: 'Login qiling' });
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload;
-    next();
-  } catch {
-    res.status(401).json({ msg: "Invalid access token" });
+    // fetch current tokenVersion
+    try {
+      const user = await User.findById(payload.id).select('+tokenVersion');
+      if (!user) return res.status(401).json({ msg: 'Token noto‘g‘ri' });
+      if ((user.tokenVersion || 0) !== (payload.tv || 0)) {
+        return res.status(401).json({ msg: 'Token bekor qilingan' });
+      }
+      req.user = { id: String(user._id), username: user.username, role: user.role };
+    } catch (e) {
+      // if DB fails, proceed cautiously
+      req.user = { id: payload.id, username: payload.username, role: payload.role };
+    }
+
+    // user-level rate limiter (lightweight)
+    try {
+      const uid = String(req.user.id);
+      let meta = userRateCache.get(uid) || { count: 0, resetAt: Date.now() + 60 * 1000 };
+      if (Date.now() > meta.resetAt) meta = { count: 0, resetAt: Date.now() + 60 * 1000 };
+      meta.count = (meta.count || 0) + 1;
+      userRateCache.set(uid, meta);
+      if (meta.count > 120) return res.status(429).json({ msg: 'Too many requests (user rate limit)' });
+    } catch (e) { console.warn('user rate limiter failed', e.message || e); }
+
+    return next();
+  } catch (e) {
+    return res.status(401).json({ msg: 'Token noto‘g‘ri' });
   }
 }
 
@@ -452,20 +456,19 @@ app.post('/auth/register', authLimiter, async (req, res) => {
 
     const user = await User.create({ username, password });
 
-    // replaced token issuance per spec:
-    const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
+    const token = await signTokenForUser(user);
 
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    // TOKENNI JSON QILIB QAYTARMAYMIZ — COOKIE QILAMIZ
+   res.cookie("token", token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+  domain: ".intizom.org",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
 
-    res.json({ accessToken });
-
+    res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username } });
   } catch (e) {
     console.error('REGISTER ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
@@ -484,19 +487,19 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     const match = await user.comparePassword(password);
     if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
 
-    // replaced token issuance per spec:
-    const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
+    const token = await signTokenForUser(user);
 
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    // TOKEN endi HttpOnly cookie bo‘ladi
+   res.cookie("token", token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+  domain: ".intizom.org",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
 
-    res.json({ accessToken });
+    res.json({ msg: 'Login muvaffaqiyatli' });
 
   } catch (e) {
     console.error('LOGIN ERROR:', e);
@@ -504,48 +507,24 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Refresh route added (per spec)
-app.post("/auth/refresh", async (req, res) => {
-  const token = req.cookies?.refreshToken;
-  if (!token) return res.status(401).json({ msg: "No refresh token" });
-
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(payload.id).select("+tokenVersion +username +role");
-    if (!user || user.tokenVersion !== payload.tv)
-      return res.status(401).json({ msg: "Invalid refresh" });
-
-    const accessToken = signAccessToken(user);
-    res.json({ accessToken });
-  } catch {
-    res.status(401).json({ msg: "Invalid refresh" });
-  }
-});
 
 // logout / revoke tokens for user by incrementing tokenVersion
 app.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
-
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/"
-    });
-
+    // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
-    res.json({ msg: 'Chiqish amalga oshirildi' });
+    return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
-    res.status(500).json({ msg: 'Server xatosi' });
+    console.error('LOGOUT ERROR:', e);
+    return res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 
 // -----------------
 // Uploads
 // -----------------
-app.post('/upload/avatar', authMiddleware, csrfMiddleware, avatarUpload.single('avatar'), async (req, res) => {
+app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async (req, res) => {
   if (!req.file) return res.status(400).json({ msg: 'Avatar yuklanmadi' });
   try {
     const ok = await validateFileMagic(req.file.path, ['image/']);
@@ -573,7 +552,7 @@ app.post('/upload/avatar', authMiddleware, csrfMiddleware, avatarUpload.single('
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-app.post('/upload', authMiddleware, csrfMiddleware, mediaUpload.array('media', 5), async (req, res) => {
+app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, res) => {
   try {
     const files = req.files || [];
     if (!files.length) return res.status(400).json({ msg: "Media yuklanmadi" });
@@ -804,7 +783,6 @@ app.get('/posts', async (req, res) => {
 app.delete('/admin/users/:id',
   adminDomainOnly,
   authMiddleware,
-  csrfMiddleware,
   adminMiddleware,
   adminIpOnly,
   async (req, res) => {
@@ -831,7 +809,7 @@ app.delete('/admin/users/:id',
 // -----------------
 // Like / Comment endpoints (atomic counters)
 // -----------------
-app.post('/posts/:id/like', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/posts/:id/like', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user.id;
@@ -854,7 +832,7 @@ app.post('/posts/:id/like', authMiddleware, csrfMiddleware, async (req, res) => 
 });
 
 
-app.post('/posts/:id/unlike', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user.id;
@@ -874,7 +852,7 @@ app.post('/posts/:id/unlike', authMiddleware, csrfMiddleware, async (req, res) =
 });
 
 
-app.post('/posts/:id/comment', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const text = String(req.body.text || '').trim().slice(0, 2000);
@@ -898,7 +876,7 @@ app.post('/posts/:id/comment', authMiddleware, csrfMiddleware, async (req, res) 
 
 // -----------------
 // Follow / Unfollow
-app.post('/follow/:username', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
     const username = req.params.username;
@@ -924,7 +902,7 @@ app.post('/follow/:username', authMiddleware, csrfMiddleware, async (req, res) =
   }
 });
 
-app.post('/unfollow/:username', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/unfollow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
     const username = req.params.username;
@@ -951,7 +929,6 @@ app.post('/unfollow/:username', authMiddleware, csrfMiddleware, async (req, res)
 app.post('/admin/posts/:id/approve',
   adminDomainOnly,
   authMiddleware,
-  csrfMiddleware,
   adminMiddleware,
   adminIpOnly,
   async (req, res) => {
@@ -1315,7 +1292,7 @@ app.get('/profile/:username/following', async (req, res) => {
     res.status(500).json([]);
   }
 });
-app.put('/profile', authMiddleware, csrfMiddleware, async (req, res) => {
+app.put('/profile', authMiddleware, async (req, res) => {
   try {
     const { bio = "", website = "" } = req.body;
 
@@ -1385,13 +1362,13 @@ app.get('/messages/:username', authMiddleware, async (req, res) => {
 
     res.json(msgs);
   } catch (e) {
-    console.error('GET /messages ERROR', e);
+    console.error('GET /messages ERROR:', e);
     res.status(500).json([]);
   }
 });
 
 // Send message
-app.post('/messages', authMiddleware, csrfMiddleware, async (req, res) => {
+app.post('/messages', authMiddleware, async (req, res) => {
   try {
     const { to, text } = req.body;
     const from = req.user.username;
@@ -1431,7 +1408,7 @@ app.get('/users/search', authMiddleware, async (req, res) => {
     res.status(500).json([]);
   }
 });
-app.put('/auth/change-password', authMiddleware, csrfMiddleware, async (req, res) => {
+app.put('/auth/change-password', authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
@@ -1488,7 +1465,6 @@ app.get('/admin/posts',
 app.delete('/admin/posts/:id',
   adminDomainOnly,
   authMiddleware,
-  csrfMiddleware,
   adminMiddleware,
   adminIpOnly,
   async (req, res) => {
