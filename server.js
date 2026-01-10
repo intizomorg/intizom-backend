@@ -42,13 +42,13 @@ const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
 const cookieParser = require("cookie-parser");
-app.use(cookieParser());
+
 
 const app = express();
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
 app.set('trust proxy', true);
-
+app.use(cookieParser());
 // ADDED: mount adminDomainOnly for all /admin routes
 
 // -----------------
