@@ -1103,9 +1103,9 @@ app.get(
   adminIpOnly,
   async (req, res) => {
     try {
-      const posts = await Post.find({ status: { $ne: "approved" } })
+      const posts = await Post.find({})
         .sort({ createdAt: -1 })
-        .limit(100)
+        .limit(200)
         .lean();
 
       res.json(posts);
@@ -1114,6 +1114,7 @@ app.get(
     }
   }
 );
+
 
 // -----------------
 // View endpoint (atomic views + viewer dedupe)
