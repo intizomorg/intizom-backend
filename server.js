@@ -51,7 +51,7 @@ if (!process.env.JWT_SECRET) {
 const JWT_SECRET = process.env.JWT_SECRET;
 const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
 const PERSISTENT_MEDIA_ROOT = process.env.PERSISTENT_MEDIA_ROOT || path.join(__dirname, 'media');
-
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()).filter(Boolean);
 connectDB();
 
 // -----------------
@@ -72,25 +72,14 @@ app.use(helmet({
   contentSecurityPolicy: false // tune CSP in production as needed
 }));
 
-const ALLOWED_ORIGINS = [
-  'https://intizom.org',
-  'https://www.intizom.org'
-];
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  }
-
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-
-
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const allowed = ALLOWED_ORIGINS.includes(origin);
+    callback(null, allowed);
+  },
+  credentials: true
+}));
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -296,52 +285,65 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
+  // clear legacy 'token' cookie explicitly
+  res.cookie('token', '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/',
+    maxAge: 0
+  });
+
+  // set accessToken
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 15 * 60 * 1000
   });
 
+  // set refreshToken (scoped to refresh endpoint)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
-
-// Clear auth cookies on logout (FIXED)
+// Clear auth cookies on logout
 function clearAuthCookies(res) {
   res.cookie('accessToken', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
   });
-
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 0
   });
-
-  // legacy token cleanup (no domain!)
+  // legacy
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
   });
 }
-
 
 // -----------------
 // REPLACED: authMiddleware (uses accessToken cookie)
@@ -1371,7 +1373,14 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: ['https://intizom.org', 'https://www.intizom.org'],
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      const allowed = ALLOWED_ORIGINS.includes(origin);
+      if (allowed) return callback(null, true);
+      console.log("SOCKET CORS BLOCKED:", origin);
+      callback(null, false);
+    },
+    methods: ['GET', 'POST'],
     credentials: true
   }
 });
