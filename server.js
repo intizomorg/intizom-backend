@@ -306,15 +306,15 @@ function setAuthCookies(res, accessToken, refreshToken) {
   });
 
   // set refreshToken (scoped to refresh endpoint)
-  res.cookie('refreshToken', refreshToken, {
+ res.cookie('refreshToken', refreshToken, {
   httpOnly: true,
   secure: true,
   sameSite: 'none',
   domain: '.intizom.org',
-  path: '/',     // ❗ /auth/refresh emas
+  path: '/',
   maxAge: 30 * 24 * 60 * 60 * 1000
 });
-
+}
 
 // Clear auth cookies on logout
 function clearAuthCookies(res) {
