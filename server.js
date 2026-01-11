@@ -285,45 +285,46 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  const isProd = process.env.NODE_ENV === "production";
+  const isProd = process.env.NODE_ENV === 'production';
 
   const base = {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax",
-    domain: isProd ? ".intizom.org" : undefined,
-    path: "/"
+    sameSite: isProd ? 'none' : 'lax',
+    domain: '.intizom.org',
+    path: '/'
   };
 
-  res.cookie("accessToken", accessToken, {
+  res.cookie('accessToken', accessToken, {
     ...base,
     maxAge: 15 * 60 * 1000
   });
 
-  res.cookie("refreshToken", refreshToken, {
+  res.cookie('refreshToken', refreshToken, {
     ...base,
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
-function clearAuthCookies(res) {
-  const isProd = process.env.NODE_ENV === "production";
 
+function clearAuthCookies(res) {
   const base = {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
-    domain: isProd ? ".intizom.org" : undefined,
-    path: "/"
+    secure: true,
+    sameSite: 'none',
+    domain: '.intizom.org',
+    path: '/'
   };
 
-  res.clearCookie("accessToken", base);
-  res.clearCookie("refreshToken", base);
+  res.clearCookie('accessToken', base);
+  res.clearCookie('refreshToken', base);
+}
+
 
   // eski legacy cookie majburan yo‘q qilinadi
   res.clearCookie("refreshToken", { ...base, path: "/auth/refresh" });
   res.clearCookie("token", base);
-}
+
 
 
 // -----------------
