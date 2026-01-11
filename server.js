@@ -122,28 +122,7 @@ function ensureDir(p) {
 ensureDir(path.join(PERSISTENT_MEDIA_ROOT, 'videos'));
 ensureDir(path.join(PERSISTENT_MEDIA_ROOT, 'images'));
 
-const AVATAR_ROOT = path.join(__dirname, 'avatars');
-ensureDir(AVATAR_ROOT);
-
-// serve avatars WITH PROPER HEADERS
-app.use('/avatars', (req, res, next) => {
-  const origin =
-    req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)
-      ? req.headers.origin
-      : ALLOWED_ORIGINS[0];
-
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
-  res.setHeader('Vary', 'Origin');
-
-  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-
-  next();
-}, express.static(AVATAR_ROOT));
+// Note: AVATAR_ROOT and serving avatars statically removed — avatars will be uploaded to Cloudinary via memory upload.
 
 const cloudinary = require('cloudinary').v2;
 cloudinary.config({
@@ -265,20 +244,11 @@ const mediaUpload = multer({
   limits: { files: 5, fileSize: 150 * 1024 * 1024 } // 150MB per file
 });
 
-const avatarStorage = multer.diskStorage({
-  destination: (req, file, cb) => { const dir = path.join(__dirname, 'avatars'); ensureDir(dir); cb(null, dir); },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.png';
-    const uid = (req.user && req.user.id) ? String(req.user.id) : 'anon';
-    cb(null, `${uid}-${Date.now()}${ext}`);
-  }
+// Avatar upload — switched to memory storage (no local avatars dir)
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
-function avatarFileFilter(req, file, cb) {
-  if (!file.mimetype) return cb(new Error('Missing mimetype'), false);
-  if (file.mimetype.startsWith('image/')) return cb(null, true);
-  return cb(new Error('Unsupported avatar type'), false);
-}
-const avatarUpload = multer({ storage: avatarStorage, fileFilter: avatarFileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // -----------------
 // Auth helpers (JWT includes tokenVersion for revocation)
@@ -605,27 +575,26 @@ app.post('/auth/logout', authMiddleware, async (req, res) => {
 // Uploads
 // -----------------
 app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ msg: 'Avatar yuklanmadi' });
   try {
-    const ok = await validateFileMagic(req.file.path, ['image/']);
-    if (!ok) { fs.unlinkSync(req.file.path); return res.status(400).json({ msg: 'Avatar fayli yaroqsiz yoki manipulyatsiya qilingan' }); }
+    if (!req.file) return res.status(400).json({ msg: 'Avatar yuklanmadi' });
 
-    const user = await User.findById(req.user.id);
-    if (!user) { fs.unlinkSync(req.file.path); return res.status(404).json({ msg: 'Foydalanuvchi topilmadi' }); }
+    const result = await cloudinary.uploader.upload_stream({
+      folder: 'intizom/avatars',
+      resource_type: 'image'
+    }, async (err, uploaded) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ msg: 'Cloudinary xatosi' });
+      }
 
-    // remove previous avatar if stored locally and inside avatars dir (safe)
-    if (user.avatar && user.avatar.startsWith(MEDIA_BASE_URL)) {
-      try {
-        const rel = user.avatar.replace(MEDIA_BASE_URL + '/avatars/', '');
-        const disk = safeResolveWithin(AVATAR_ROOT, rel);
-        if (disk && fs.existsSync(disk)) fs.unlinkSync(disk);
-      } catch (e) { /* ignore */ }
-    }
+      const user = await User.findById(req.user.id);
+      user.avatar = uploaded.secure_url;
+      await user.save();
 
-    user.avatar = `${MEDIA_BASE_URL}/avatars/${req.file.filename}`;
-    await user.save();
-    invalidateUserPostsCache(req.user.id);
-    res.json({ msg: 'Avatar yangilandi', avatar: user.avatar });
+      res.json({ msg: 'Avatar yangilandi', avatar: uploaded.secure_url });
+    });
+
+    result.end(req.file.buffer);
   } catch (e) {
     console.error('AVATAR ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
