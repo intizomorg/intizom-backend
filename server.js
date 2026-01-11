@@ -285,41 +285,46 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  const isProd = process.env.NODE_ENV === 'production';
-
-  const base = {
+  res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    path: '/'
-  };
-
-  res.cookie('accessToken', accessToken, {
-    ...base,
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
+    path: "/",
     maxAge: 15 * 60 * 1000
   });
 
-  res.cookie('refreshToken', refreshToken, {
-    ...base,
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
+    path: "/auth/refresh",
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
 
+
 // Clear auth cookies on logout
 function clearAuthCookies(res) {
-  const isProd = process.env.NODE_ENV === 'production';
-
-  const base = {
+  res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    path: '/'
-  };
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
+    path: "/"
+  });
 
-  res.clearCookie('accessToken', base);
-  res.clearCookie('refreshToken', base);
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
+    path: "/auth/refresh"
+  });
 }
+
 
 
 // -----------------
