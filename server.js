@@ -6,14 +6,6 @@
 // - PERSISTENT_MEDIA_ROOT (optional, default path.join(__dirname, 'media'))
 // - REDIS_URL (optional)
 
-// NOTE: This file updates three important areas:
-// 1) lru-cache usage (new API: LRUCache)
-// 2) /posts/reels: fixed liked bug (p._1 -> p._id)
-// 3) /posts/:id/view: view counter now uses viewedBy and atomically increments + records viewer
-// 4) Cache invalidation is now user-scoped by default; global invalidation kept for admin operations
-// 5) Rate limiting: moved from global to per-route (auth + api + view-specific limiter)
-// 6) Avatar deletion: protected with safeResolveWithin
-
 const { LRUCache } = require('lru-cache');
 
 const postsCache = new LRUCache({
@@ -74,6 +66,7 @@ const Like = require('./models/Like');
 const Follow = require('./models/Follow');
 const Message = require('./models/Message');
 const Comment = require('./models/Comment');
+const RefreshToken = require('./models/RefreshToken');
 
 // -----------------
 // Security middlewares
@@ -300,48 +293,54 @@ const avatarUpload = multer({ storage: avatarStorage, fileFilter: avatarFileFilt
 // -----------------
 // Auth helpers (JWT includes tokenVersion for revocation)
 // -----------------
-async function signTokenForUser(user) {
-  const payload = {
-    id: String(user._id),
-    username: user.username,
-    role: user.role || 'user',
-    tv: (user.tokenVersion || 0)
-  };
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+
+function signAccessToken(user) {
+  return jwt.sign(
+    {
+      id: String(user._id),
+      username: user.username,
+      role: user.role,
+      tv: user.tokenVersion || 0
+    },
+    JWT_SECRET,
+    { expiresIn: '15m' }
+  );
 }
 
+function signRefreshToken() {
+  return crypto.randomBytes(40).toString('hex');
+}
+
+async function createRefreshToken(user) {
+  const rawToken = signRefreshToken();
+  const hash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  await RefreshToken.create({
+    userId: user._id,
+    tokenHash: hash,
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+  });
+
+  return rawToken;
+}
+
+// -----------------
+// REPLACED: authMiddleware (uses accessToken cookie)
+// -----------------
 async function authMiddleware(req, res, next) {
-  const token = req.cookies?.token;
-  if (!token) return res.status(401).json({ msg: 'Login qiling' });
+  const token = req.cookies?.accessToken;
+  if (!token) return res.status(401).json({ msg: 'Unauthorized' });
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    // fetch current tokenVersion
-    try {
-      const user = await User.findById(payload.id).select('+tokenVersion');
-      if (!user) return res.status(401).json({ msg: 'Token noto‘g‘ri' });
-      if ((user.tokenVersion || 0) !== (payload.tv || 0)) {
-        return res.status(401).json({ msg: 'Token bekor qilingan' });
-      }
-      req.user = { id: String(user._id), username: user.username, role: user.role };
-    } catch (e) {
-      // if DB fails, proceed cautiously
-      req.user = { id: payload.id, username: payload.username, role: payload.role };
-    }
+    const user = await User.findById(payload.id).select('+tokenVersion +username +role');
+    if (!user) return res.status(401).json({ msg: 'Unauthorized' });
+    if ((user.tokenVersion || 0) !== (payload.tv || 0)) return res.status(401).json({ msg: 'Token revoked' });
 
-    // user-level rate limiter (lightweight)
-    try {
-      const uid = String(req.user.id);
-      let meta = userRateCache.get(uid) || { count: 0, resetAt: Date.now() + 60 * 1000 };
-      if (Date.now() > meta.resetAt) meta = { count: 0, resetAt: Date.now() + 60 * 1000 };
-      meta.count = (meta.count || 0) + 1;
-      userRateCache.set(uid, meta);
-      if (meta.count > 120) return res.status(429).json({ msg: 'Too many requests (user rate limit)' });
-    } catch (e) { console.warn('user rate limiter failed', e.message || e); }
-
+    req.user = { id: String(user._id), username: user.username, role: user.role };
     return next();
-  } catch (e) {
-    return res.status(401).json({ msg: 'Token noto‘g‘ri' });
+  } catch {
+    return res.status(401).json({ msg: 'Unauthorized' });
   }
 }
 
@@ -445,75 +444,148 @@ function invalidateUserPostsCache(userId) {
 // -----------------
 // Routes: Auth
 // -----------------
-app.post('/auth/register', authLimiter, async (req, res) => {
+app.post("/auth/register", authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
-      return res.status(400).json({ msg: 'Username va password majburiy' });
+      return res.status(400).json({ msg: "Username va password majburiy" });
 
     const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ msg: 'Username band' });
+    if (exists) return res.status(400).json({ msg: "Username band" });
 
     const user = await User.create({ username, password });
 
-    const token = await signTokenForUser(user);
+    const accessToken = signAccessToken(user);
+    const refreshToken = await createRefreshToken(user);
 
-    // TOKENNI JSON QILIB QAYTARMAYMIZ — COOKIE QILAMIZ
-   res.cookie("token", token, {
-  httpOnly: true,
-  secure: true,
-  sameSite: "none",
-  domain: ".intizom.org",
-  path: "/",
-  maxAge: 7 * 24 * 60 * 60 * 1000
-});
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      domain: ".intizom.org",
+      path: "/",
+      maxAge: 15 * 60 * 1000
+    });
 
-    res.json({ msg: 'Ro‘yxatdan o‘tildi', user: { id: user._id, username: user.username } });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      domain: ".intizom.org",
+      path: "/auth/refresh",
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({ msg: "Ro‘yxatdan o‘tildi" });
   } catch (e) {
-    console.error('REGISTER ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+    console.error("REGISTER ERROR:", e);
+    res.status(500).json({ msg: "Server xatosi" });
   }
 });
-
-app.post('/auth/login', authLimiter, async (req, res) => {
+app.post("/auth/login", authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
-      return res.status(400).json({ msg: 'Username va password majburiy' });
+      return res.status(400).json({ msg: "Username va password majburiy" });
 
-    const user = await User.findOne({ username }).select('+password +tokenVersion +role');
-    if (!user) return res.status(400).json({ msg: 'User topilmadi' });
+    const user = await User.findOne({ username }).select("+password +tokenVersion +role");
+    if (!user) return res.status(400).json({ msg: "User topilmadi" });
 
-    const match = await user.comparePassword(password);
-    if (!match) return res.status(400).json({ msg: 'Parol noto‘g‘ri' });
+    const ok = await user.comparePassword(password);
+    if (!ok) return res.status(400).json({ msg: "Parol noto‘g‘ri" });
 
-    const token = await signTokenForUser(user);
+    const accessToken = signAccessToken(user);
+    const refreshToken = await createRefreshToken(user);
 
-    // TOKEN endi HttpOnly cookie bo‘ladi
-   res.cookie("token", token, {
-  httpOnly: true,
-  secure: true,
-  sameSite: "none",
-  domain: ".intizom.org",
-  path: "/",
-  maxAge: 7 * 24 * 60 * 60 * 1000
-});
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      domain: ".intizom.org",
+      path: "/",
+      maxAge: 15 * 60 * 1000
+    });
 
-    res.json({ msg: 'Login muvaffaqiyatli' });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      domain: ".intizom.org",
+      path: "/auth/refresh",
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
 
+    res.json({ msg: "Login muvaffaqiyatli" });
   } catch (e) {
-    console.error('LOGIN ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+    console.error("LOGIN ERROR:", e);
+    res.status(500).json({ msg: "Server xatosi" });
   }
 });
 
+
+// Refresh endpoint: rotate refresh token and return new access token
+app.post('/auth/refresh', async (req, res) => {
+  try {
+    const raw = req.cookies?.refreshToken;
+    if (!raw) return res.status(401).json({ msg: 'Refresh token topilmadi' });
+
+    const hash = crypto.createHash('sha256').update(String(raw)).digest('hex');
+
+    const tokenDoc = await RefreshToken.findOne({ tokenHash: hash });
+    if (!tokenDoc) return res.status(401).json({ msg: 'Refresh token noto‘g‘ri' });
+    if (tokenDoc.expiresAt && tokenDoc.expiresAt < new Date()) {
+      // expired
+      await RefreshToken.deleteOne({ _id: tokenDoc._id });
+      return res.status(401).json({ msg: 'Refresh token muddati o‘tgan' });
+    }
+
+    const user = await User.findById(tokenDoc.userId).select('+tokenVersion +username +role');
+    if (!user) return res.status(401).json({ msg: 'Foydalanuvchi topilmadi' });
+
+    // rotate: remove used token and create a new one
+    await RefreshToken.deleteOne({ _id: tokenDoc._id });
+
+    const newRefresh = await createRefreshToken(user);
+    const newAccess = signAccessToken(user);
+
+    // NOTE: replaced cookie name 'token' -> 'accessToken'
+    res.cookie('accessToken', newAccess, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      domain: '.intizom.org',
+      path: '/',
+      maxAge: 15 * 60 * 1000 // 15 minutes
+    });
+
+    res.cookie('refreshToken', newRefresh, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      domain: '.intizom.org',
+      path: '/auth/refresh',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    res.json({ msg: 'Tokens refreshed' });
+  } catch (e) {
+    console.error('REFRESH ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
 
 // logout / revoke tokens for user by incrementing tokenVersion
 app.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
+    // remove refresh tokens for this user
+    try { await RefreshToken.deleteMany({ userId: req.user.id }); } catch (e) { console.warn('Failed to remove refresh tokens', e.message || e); }
     // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
+    // clear cookies client-side by setting empty values
+    // NOTE: remove any 'token' cookie references -> use accessToken
+    res.cookie('accessToken', '', { httpOnly: true, secure: true, sameSite: 'none', domain: '.intizom.org', path: '/', maxAge: 0 });
+    res.cookie('refreshToken', '', { httpOnly: true, secure: true, sameSite: 'none', domain: '.intizom.org', path: '/auth/refresh', maxAge: 0 });
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
@@ -697,9 +769,9 @@ app.get('/posts', async (req, res) => {
     let followingSet = new Set();
 
     // COOKIE-BASED auth (replaced header-based logic)
-    if (req.cookies?.token) {
+    if (req.cookies?.accessToken) {
       try {
-        const payload = jwt.verify(req.cookies.token, JWT_SECRET);
+        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         currentUserId = payload.id;
         currentUsername = payload.username;
         const cached = await getCachedFollowing(currentUserId);
@@ -982,10 +1054,11 @@ const io = new Server(server, {
   }
 })();
 // Socket auth middleware (token faqat cookie'dan olinadi)
+// NOTE: cookie parsing changed to accessToken
 io.use(async (socket, next) => {
   try {
     const cookie = socket.request.headers.cookie || "";
-    const token = cookie.match(/token=([^;]+)/)?.[1];
+    const token = cookie.match(/accessToken=([^;]+)/)?.[1];
     if (!token) return next(new Error('Token topilmadi'));
 
     const payload = jwt.verify(token, JWT_SECRET);
@@ -1119,9 +1192,9 @@ app.get('/posts/reels', async (req, res) => {
 
     // COOKIE-BASED auth (was header-based)
     let userId = null;
-    if (req.cookies?.token) {
+    if (req.cookies?.accessToken) {
       try {
-        const payload = jwt.verify(req.cookies.token, JWT_SECRET);
+        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         userId = payload.id;
       } catch {}
     }
@@ -1166,9 +1239,9 @@ app.post('/posts/:id/view', viewLimiter, async (req, res) => {
   try {
     // COOKIE-BASED viewer detection (was header-based)
     let viewer = req.ip;
-    if (req.cookies?.token) {
+    if (req.cookies?.accessToken) {
       try {
-        const payload = jwt.verify(req.cookies.token, JWT_SECRET);
+        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         viewer = payload.id;
       } catch {}
     }
@@ -1528,7 +1601,6 @@ app.get('/admin/media',
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 app.get('/posts/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id).lean();
