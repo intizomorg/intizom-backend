@@ -89,10 +89,7 @@ app.use(helmet({
   contentSecurityPolicy: false // tune CSP in production as needed
 }));
 
-app.use(cors({
-  origin: "https://intizom.org",
-  credentials: true
-}));
+
 
 
 app.use(express.json({ limit: '1mb' }));
