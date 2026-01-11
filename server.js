@@ -1,4 +1,4 @@
-// server.js (production-minded MVP) — fixed version
+// server.js (production-minded MVP) — fixed & consolidated version
 // Required env:
 // - JWT_SECRET (required)
 // - MONGO_URL (recommended; but your ./db module may handle it)
@@ -25,23 +25,21 @@ const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const multer = require('multer');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const { Server } = require('socket.io');
 const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
+const cookieParser = require("cookie-parser");
+
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
-const cookieParser = require("cookie-parser");
-
 
 const app = express();
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
 app.set('trust proxy', true);
 app.use(cookieParser());
-// ADDED: mount adminDomainOnly for all /admin routes
 
 // -----------------
 // Env + basic checks
@@ -55,7 +53,6 @@ const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || `http://localhost:${process
 const PERSISTENT_MEDIA_ROOT = process.env.PERSISTENT_MEDIA_ROOT || path.join(__dirname, 'media');
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()).filter(Boolean);
 connectDB();
-
 
 // -----------------
 // Models (expect these files to exist)
@@ -72,15 +69,16 @@ const RefreshToken = require('./models/RefreshToken');
 // Security middlewares
 // -----------------
 app.use(helmet({
-  contentSecurityPolicy: false // leave more control to frontend for video embeds; tune CSP in production
+  contentSecurityPolicy: false // tune CSP in production as needed
 }));
 
 app.use(cors({
-  origin: [
-    "https://www.intizom.org",
-    "https://api.intizom.org",
-    "https://admin-api.intizom.org"
-  ],
+  origin: function (origin, callback) {
+    // allow requests with no origin like mobile apps or curl
+    if (!origin) return callback(null, true);
+    const allowed = ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o));
+    return callback(null, allowed);
+  },
   credentials: true
 }));
 
@@ -89,8 +87,6 @@ app.use(express.json({ limit: '1mb' })); // limit JSON size
 // -----------------
 // Rate limiting
 // -----------------
-// NOTE: removed global limiter to avoid throttling media/socket/admin routes
-
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
@@ -98,11 +94,8 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
-
-// Apply auth limiter only to auth routes
 app.use('/auth', authLimiter);
 
-// API limiter for user-driven endpoints (posts/follow/messages)
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 150,
@@ -113,7 +106,6 @@ app.use('/posts', apiLimiter);
 app.use('/follow', apiLimiter);
 app.use('/messages', apiLimiter);
 
-// Specific limiter for view endpoint (prevents scripted view inflation)
 const viewLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -134,7 +126,7 @@ ensureDir(path.join(PERSISTENT_MEDIA_ROOT, 'images'));
 const AVATAR_ROOT = path.join(__dirname, 'avatars');
 ensureDir(AVATAR_ROOT);
 
-// serve avatars WITH PROPER HEADERS (fix broken images)
+// serve avatars WITH PROPER HEADERS
 app.use('/avatars', (req, res, next) => {
   const origin =
     req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)
@@ -153,8 +145,8 @@ app.use('/avatars', (req, res, next) => {
 
   next();
 }, express.static(AVATAR_ROOT));
-const cloudinary = require('cloudinary').v2;
 
+const cloudinary = require('cloudinary').v2;
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -189,7 +181,7 @@ async function initRedis() {
 initRedis().catch(e => console.warn('initRedis error', e.message || e));
 
 // -----------------
-// Lightweight LRU for in-memory caches (bounded to avoid memory growth)
+// Lightweight LRU for in-memory caches
 // -----------------
 function createLRU(maxSize = 50000) {
   const map = new Map();
@@ -238,7 +230,6 @@ async function validateFileMagic(filePath, allowedPrefixes = []) {
   }
 }
 
-
 function safeResolveWithin(base, file) {
   const baseResolved = path.resolve(base);
   const full = path.resolve(path.join(base, file));
@@ -247,7 +238,7 @@ function safeResolveWithin(base, file) {
 }
 
 // -----------------
-// Multer storages + filters (use persistent root)
+// Multer storages + filters
 // -----------------
 const mediaStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -293,7 +284,6 @@ const avatarUpload = multer({ storage: avatarStorage, fileFilter: avatarFileFilt
 // -----------------
 // Auth helpers (JWT includes tokenVersion for revocation)
 // -----------------
-
 function signAccessToken(user) {
   return jwt.sign(
     {
@@ -324,6 +314,68 @@ async function createRefreshToken(user) {
   return rawToken;
 }
 
+// Centralized cookie setter/clearer
+function setAuthCookies(res, accessToken, refreshToken) {
+  // clear legacy 'token' cookie explicitly
+  res.cookie('token', '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/',
+    maxAge: 0
+  });
+
+  // set accessToken
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/',
+    maxAge: 15 * 60 * 1000
+  });
+
+  // set refreshToken (scoped to refresh endpoint)
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/auth/refresh',
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  });
+}
+
+// Clear auth cookies on logout
+function clearAuthCookies(res) {
+  res.cookie('accessToken', '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/',
+    maxAge: 0
+  });
+  res.cookie('refreshToken', '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/auth/refresh',
+    maxAge: 0
+  });
+  // legacy
+  res.cookie('token', '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    path: '/',
+    maxAge: 0
+  });
+}
+
 // -----------------
 // REPLACED: authMiddleware (uses accessToken cookie)
 // -----------------
@@ -338,8 +390,19 @@ async function authMiddleware(req, res, next) {
     if ((user.tokenVersion || 0) !== (payload.tv || 0)) return res.status(401).json({ msg: 'Token revoked' });
 
     req.user = { id: String(user._id), username: user.username, role: user.role };
+
+    // user-level lightweight rate-limiter
+    try {
+      const uid = String(req.user.id);
+      let meta = userRateCache.get(uid) || { count: 0, resetAt: Date.now() + 60 * 1000 };
+      if (Date.now() > meta.resetAt) meta = { count: 0, resetAt: Date.now() + 60 * 1000 };
+      meta.count = (meta.count || 0) + 1;
+      userRateCache.set(uid, meta);
+      if (meta.count > 120) return res.status(429).json({ msg: 'Too many requests (user rate limit)' });
+    } catch (e) { /* best-effort only */ }
+
     return next();
-  } catch {
+  } catch (e) {
     return res.status(401).json({ msg: 'Unauthorized' });
   }
 }
@@ -433,7 +496,6 @@ function invalidateUserPostsCache(userId) {
         postsCache.delete(key);
         continue;
       }
-      // also clear guest cache so the user sees updated content when logged out
       if (key.startsWith('posts:guest:')) postsCache.delete(key);
     }
   } catch (e) {
@@ -458,23 +520,7 @@ app.post("/auth/register", authLimiter, async (req, res) => {
     const accessToken = signAccessToken(user);
     const refreshToken = await createRefreshToken(user);
 
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      domain: ".intizom.org",
-      path: "/",
-      maxAge: 15 * 60 * 1000
-    });
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      domain: ".intizom.org",
-      path: "/auth/refresh",
-      maxAge: 30 * 24 * 60 * 60 * 1000
-    });
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.json({ msg: "Ro‘yxatdan o‘tildi" });
   } catch (e) {
@@ -482,6 +528,7 @@ app.post("/auth/register", authLimiter, async (req, res) => {
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 app.post("/auth/login", authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -497,23 +544,7 @@ app.post("/auth/login", authLimiter, async (req, res) => {
     const accessToken = signAccessToken(user);
     const refreshToken = await createRefreshToken(user);
 
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      domain: ".intizom.org",
-      path: "/",
-      maxAge: 15 * 60 * 1000
-    });
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      domain: ".intizom.org",
-      path: "/auth/refresh",
-      maxAge: 30 * 24 * 60 * 60 * 1000
-    });
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.json({ msg: "Login muvaffaqiyatli" });
   } catch (e) {
@@ -521,7 +552,6 @@ app.post("/auth/login", authLimiter, async (req, res) => {
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
-
 
 // Refresh endpoint: rotate refresh token and return new access token
 app.post('/auth/refresh', async (req, res) => {
@@ -534,7 +564,6 @@ app.post('/auth/refresh', async (req, res) => {
     const tokenDoc = await RefreshToken.findOne({ tokenHash: hash });
     if (!tokenDoc) return res.status(401).json({ msg: 'Refresh token noto‘g‘ri' });
     if (tokenDoc.expiresAt && tokenDoc.expiresAt < new Date()) {
-      // expired
       await RefreshToken.deleteOne({ _id: tokenDoc._id });
       return res.status(401).json({ msg: 'Refresh token muddati o‘tgan' });
     }
@@ -548,24 +577,7 @@ app.post('/auth/refresh', async (req, res) => {
     const newRefresh = await createRefreshToken(user);
     const newAccess = signAccessToken(user);
 
-    // NOTE: replaced cookie name 'token' -> 'accessToken'
-    res.cookie('accessToken', newAccess, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      domain: '.intizom.org',
-      path: '/',
-      maxAge: 15 * 60 * 1000 // 15 minutes
-    });
-
-    res.cookie('refreshToken', newRefresh, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      domain: '.intizom.org',
-      path: '/auth/refresh',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-    });
+    setAuthCookies(res, newAccess, newRefresh);
 
     res.json({ msg: 'Tokens refreshed' });
   } catch (e) {
@@ -578,14 +590,11 @@ app.post('/auth/refresh', async (req, res) => {
 app.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
-    // remove refresh tokens for this user
     try { await RefreshToken.deleteMany({ userId: req.user.id }); } catch (e) { console.warn('Failed to remove refresh tokens', e.message || e); }
-    // selectively invalidate this user's caches
     invalidateUserPostsCache(req.user.id);
-    // clear cookies client-side by setting empty values
-    // NOTE: remove any 'token' cookie references -> use accessToken
-    res.cookie('accessToken', '', { httpOnly: true, secure: true, sameSite: 'none', domain: '.intizom.org', path: '/', maxAge: 0 });
-    res.cookie('refreshToken', '', { httpOnly: true, secure: true, sameSite: 'none', domain: '.intizom.org', path: '/auth/refresh', maxAge: 0 });
+
+    clearAuthCookies(res);
+
     return res.json({ msg: 'Chiqish amalga oshirildi' });
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
@@ -616,7 +625,6 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
 
     user.avatar = `${MEDIA_BASE_URL}/avatars/${req.file.filename}`;
     await user.save();
-    // avatar change may affect profile caches; invalidate only this user's feeds
     invalidateUserPostsCache(req.user.id);
     res.json({ msg: 'Avatar yangilandi', avatar: user.avatar });
   } catch (e) {
@@ -624,6 +632,7 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, res) => {
   try {
     const files = req.files || [];
@@ -672,7 +681,6 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
       createdAt: new Date()
     });
 
-    // new post should invalidate caches for this user and guest caches
     invalidateUserPostsCache(req.user.id);
 
     res.json({ msg: "Post yaratildi", post: postDoc });
@@ -682,7 +690,6 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
   }
 });
 
-
 // -----------------
 // Media streaming (single implementation)
 // -----------------
@@ -690,18 +697,16 @@ app.get('/media/:folder/:file', (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
 
   try {
-    // FIXED: avoid wildcard origin when credentials are true — select origin from request if allowed
     const originToAllow = req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)
       ? req.headers.origin
       : ALLOWED_ORIGINS[0];
-      
+
     res.setHeader('Access-Control-Allow-Origin', originToAllow);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
     res.setHeader('Vary', 'Origin');
 
-    // FIXED: explicitly override COEP/COOP/RO headers so autoplay and cross-origin embedding work in browsers
     res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
@@ -756,8 +761,6 @@ app.get('/media/:folder/:file', (req, res) => {
 
 // -----------------
 // Posts listing optimized for scale
-// - uses Post stored counters (likesCount/commentsCount/views)
-// - avoids aggregation per-request
 // -----------------
 app.get('/posts', async (req, res) => {
   try {
@@ -768,7 +771,6 @@ app.get('/posts', async (req, res) => {
     let currentUsername = null;
     let followingSet = new Set();
 
-    // COOKIE-BASED auth (replaced header-based logic)
     if (req.cookies?.accessToken) {
       try {
         const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
@@ -777,7 +779,6 @@ app.get('/posts', async (req, res) => {
         const cached = await getCachedFollowing(currentUserId);
         if (cached) followingSet = cached;
         else {
-          // support both followerId and follower fields for compatibility
           const follows = await Follow.find({ $or: [{ followerId: currentUserId }, { follower: currentUsername }] }).select('followingId following');
           const followingList = follows.map(f => (f.followingId ? String(f.followingId) : (f.following || '')));
           followingSet = new Set(followingList);
@@ -786,7 +787,6 @@ app.get('/posts', async (req, res) => {
       } catch (e) { /* ignore auth parse errors */ }
     }
 
-    // CACHE CHECK (user-scoped)
     const userPart = currentUserId || 'guest';
     const cacheKey = `posts:${userPart}:${page}:${limit}:${req.query.feed || 'all'}`;
     const cached = postsCache.get(cacheKey);
@@ -795,15 +795,12 @@ app.get('/posts', async (req, res) => {
     }
 
     const query = { status: 'approved' };
-    // optionally allow filter by following
     if (req.query.feed === 'following' && currentUserId) {
-      // if followingSet empty return empty results quickly
       if (!followingSet || followingSet.size === 0) {
         const emptyResponse = { page, limit, posts: [] };
         postsCache.set(cacheKey, emptyResponse);
         return res.json(emptyResponse);
       }
-      // if followingSet contains userIds, match by userId; otherwise by username
       const userIdList = Array.from(followingSet).filter(s => mongoose.Types.ObjectId.isValid(s));
       if (userIdList.length > 0) query.userId = { $in: userIdList };
       else query.username = { $in: Array.from(followingSet) };
@@ -816,7 +813,6 @@ app.get('/posts', async (req, res) => {
       .lean();
 
     const postIds = posts.map(p => p._id);
-    // liked set for user
     const likedSet = new Set();
     if (currentUserId && postIds.length) {
       const likes = await Like.find({ postId: { $in: postIds }, userId: currentUserId }).select('postId').lean();
@@ -842,7 +838,6 @@ app.get('/posts', async (req, res) => {
       };
     });
 
-    // CACHE SAVE (user-scoped)
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
     res.json(response);
@@ -852,35 +847,71 @@ app.get('/posts', async (req, res) => {
   }
 });
 
-app.delete('/admin/users/:id',
-  adminDomainOnly,
-  authMiddleware,
-  adminMiddleware,
-  adminIpOnly,
-  async (req, res) => {
+// -----------------
+// Specific endpoints (kept singular / deduped)
+// -----------------
+app.get('/posts/reels', async (req, res) => {
   try {
-    const userId = req.params.id;
+    const page = Math.max(1, parseInt(req.query.page || '1'));
+    const limit = Math.max(1, Math.min(20, parseInt(req.query.limit || '5')));
 
-    await Post.deleteMany({ userId });
-    await Follow.deleteMany({ $or: [{ followerId: userId }, { followingId: userId }] });
-    await Like.deleteMany({ userId });
-    await Message.deleteMany({ $or: [{ from: userId }, { to: userId }] });
+    let userId = null;
+    if (req.cookies?.accessToken) {
+      try {
+        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
+        userId = payload.id;
+      } catch {}
+    }
 
-    await User.findByIdAndDelete(userId);
+    const query = { status: 'approved', type: 'video' };
 
-    // admin deleted a user — invalidate everything for safety
-    invalidateAllPostsCache();
+    const docs = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
 
-    res.json({ msg: 'User to‘liq o‘chirildi' });
+    const ids = docs.map(p => p._id);
+
+    let likedSet = new Set();
+    if (userId && ids.length) {
+      const likes = await Like.find({ postId: { $in: ids }, userId }).select('postId').lean();
+      likes.forEach(l => likedSet.add(String(l.postId)));
+    }
+
+    const total = await Post.countDocuments(query);
+
+    res.json({
+      posts: docs.map(p => ({
+        ...p,
+        id: String(p._id),
+        userId: String(p.userId),
+        liked: userId ? likedSet.has(String(p._id)) : false
+      })),
+      hasMore: page * limit < total
+    });
   } catch (e) {
-    console.error('DELETE USER ERROR:', e);
+    console.error('GET /posts/reels ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
 
-// -----------------
-// Like / Comment endpoints (atomic counters)
-// -----------------
+app.get('/posts/:id', async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id).lean();
+    if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
+    res.json({
+      ...post,
+      id: String(post._id),
+      user: post.username,
+      userId: String(post.userId)
+    });
+  } catch (e) {
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+// Like / Unlike / Comment endpoints
 app.post('/posts/:id/like', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
@@ -889,7 +920,6 @@ app.post('/posts/:id/like', authMiddleware, async (req, res) => {
     try {
       await Like.create({ postId, userId, createdAt: new Date() });
       await Post.updateOne({ _id: postId }, { $inc: { likesCount: 1 } });
-      // selective invalidation (only this user's posts + guest)
       invalidateUserPostsCache(userId);
     } catch (e) {
       if (e.code !== 11000) throw e;
@@ -902,7 +932,6 @@ app.post('/posts/:id/like', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
-
 
 app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   try {
@@ -923,7 +952,6 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   }
 });
 
-
 app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
@@ -931,13 +959,12 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
     if (!text) return res.status(400).json({ msg: 'Comment bo‘sh bo‘lishi mumkin emas' });
     const c = await Comment.create({
       postId,
-      user: req.user.username,   // MUHIM
+      user: req.user.username,
       userId: req.user.id,
       text,
       createdAt: new Date()
     });
     await Post.updateOne({ _id: postId }, { $inc: { commentsCount: 1 } });
-    // selective invalidation
     invalidateUserPostsCache(req.user.id);
     res.json({ msg: 'Comment qo‘shildi', comment: c });
   } catch (e) {
@@ -946,7 +973,6 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   }
 });
 
-// -----------------
 // Follow / Unfollow
 app.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
@@ -963,7 +989,6 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
 
     await Follow.create({ followerId, followingId });
 
-    // following affects "following" feed — invalidate only follower's posts cache + guest
     invalidateUserPostsCache(followerId);
 
     res.json({ msg: 'Follow qo‘shildi' });
@@ -996,15 +1021,39 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
   }
 });
 
-// -----------------
-// Simple admin approve endpoint to mark posts approved
+// Admin endpoints (delete user / posts)
+app.delete('/admin/users/:id',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
+    try {
+      const userId = req.params.id;
+
+      await Post.deleteMany({ userId });
+      await Follow.deleteMany({ $or: [{ followerId: userId }, { followingId: userId }] });
+      await Like.deleteMany({ userId });
+      await Message.deleteMany({ $or: [{ from: userId }, { to: userId }] });
+
+      await User.findByIdAndDelete(userId);
+
+      invalidateAllPostsCache();
+
+      res.json({ msg: 'User to‘liq o‘chirildi' });
+    } catch (e) {
+      console.error('DELETE USER ERROR:', e);
+      res.status(500).json({ msg: 'Server xatosi' });
+    }
+  }
+);
+
 app.post('/admin/posts/:id/approve',
   adminDomainOnly,
   authMiddleware,
   adminMiddleware,
   adminIpOnly,
   async (req, res) => {
-
     try {
       const id = req.params.id;
       await Post.updateOne({ _id: id }, { $set: { status: 'approved' } });
@@ -1017,6 +1066,317 @@ app.post('/admin/posts/:id/approve',
   }
 );
 
+app.delete('/admin/posts/:id',
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
+    try {
+      const post = await Post.findById(req.params.id);
+      if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
+
+      for (const m of post.media || []) {
+        try {
+          // If media stored as local file under PERSISTENT_MEDIA_ROOT/media/... remove safely
+          const rel = (m.url || '').replace(MEDIA_BASE_URL + '/media/', '');
+          const disk = safeResolveWithin(PERSISTENT_MEDIA_ROOT, rel);
+          if (disk && fs.existsSync(disk)) fs.unlinkSync(disk);
+        } catch (e) { /* ignore file removal errors */ }
+      }
+
+      await Post.deleteOne({ _id: post._id });
+
+      invalidateAllPostsCache();
+
+      res.json({ msg: 'Post va media to‘liq o‘chirildi' });
+    } catch (e) {
+      console.error('ADMIN DELETE POST ERROR:', e);
+      res.status(500).json({ msg: 'Server xatosi' });
+    }
+  }
+);
+
+// -----------------
+// View endpoint (atomic views + viewer dedupe)
+// -----------------
+app.post('/posts/:id/view', viewLimiter, async (req, res) => {
+  try {
+    let viewer = req.ip;
+    if (req.cookies?.accessToken) {
+      try {
+        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
+        viewer = payload.id;
+      } catch {}
+    }
+
+    const result = await Post.updateOne(
+      { _id: req.params.id, viewedBy: { $ne: viewer } },
+      { $inc: { views: 1 }, $push: { viewedBy: viewer } }
+    );
+
+    res.json({ viewed: result.modifiedCount === 1 });
+  } catch (e) {
+    console.error('VIEW ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+// Comments, profile, search, messages (kept as before)
+app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
+  try {
+    const postId = req.params.id;
+
+    const comments = await Comment.find({ postId })
+      .sort({ createdAt: 1 })
+      .limit(200)
+      .lean();
+
+    res.json({
+      comments: comments.map(c => ({
+        id: String(c._id),
+        user: c.user,
+        text: c.text,
+        createdAt: c.createdAt
+      }))
+    });
+
+  } catch (e) {
+    console.error('GET COMMENTS ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+app.get('/profile/:username', async (req, res) => {
+  try {
+    const u = await User.findOne({ username: req.params.username }).lean();
+    if (!u) return res.status(404).json({ msg: 'User not found' });
+
+    const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
+    const followers = await Follow.countDocuments({ followingId: u._id });
+    const following = await Follow.countDocuments({ followerId: u._id });
+
+    res.json({
+      username: u.username,
+      avatar: u.avatar || null,
+      bio: u.bio || '',
+      website: u.website || '',
+      posts: postsCount,
+      followers,
+      following
+    });
+  } catch (e) {
+    console.error('GET PROFILE ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+app.get('/posts/user/:username', async (req, res) => {
+  try {
+    const u = await User.findOne({ username: req.params.username }).select('_id username');
+    if (!u) return res.json({ posts: [] });
+
+    const posts = await Post.find({ userId: u._id, status: 'approved' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      posts: posts.map(p => ({
+        ...p,
+        id: String(p._id),
+        user: u.username,
+        username: u.username,
+        userId: String(p.userId)
+      }))
+    });
+  } catch (e) {
+    console.error('GET USER POSTS ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+app.get('/profile/:username/followers', async (req, res) => {
+  try {
+    const u = await User.findOne({ username: req.params.username }).select('_id username');
+    if (!u) return res.json([]);
+
+    const followers = await Follow.find({ followingId: u._id })
+      .populate('followerId', 'username avatar')
+      .lean();
+
+    res.json(followers.map(f => ({
+      username: f.followerId.username,
+      avatar: f.followerId.avatar || null
+    })));
+  } catch (e) {
+    console.error('GET FOLLOWERS ERROR:', e);
+    res.status(500).json([]);
+  }
+});
+
+app.get('/profile/:username/following', async (req, res) => {
+  try {
+    const u = await User.findOne({ username: req.params.username }).select('_id username');
+    if (!u) return res.json([]);
+
+    const following = await Follow.find({ followerId: u._id })
+      .populate('followingId', 'username avatar')
+      .lean();
+
+    res.json(following.map(f => ({
+      username: f.followingId.username,
+      avatar: f.followingId.avatar || null
+    })));
+  } catch (e) {
+    console.error('GET FOLLOWING ERROR:', e);
+    res.status(500).json([]);
+  }
+});
+
+app.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const { bio = "", website = "" } = req.body;
+
+    await User.findByIdAndUpdate(req.user.id, {
+      $set: {
+        bio: String(bio).slice(0, 160),
+        website: String(website).slice(0, 200)
+      }
+    });
+
+    invalidateUserPostsCache(req.user.id);
+
+    res.json({ msg: 'Profile updated' });
+  } catch (e) {
+    console.error('PROFILE UPDATE ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
+
+// Messages API
+app.get('/chats', authMiddleware, async (req, res) => {
+  try {
+    const me = req.user.username;
+
+    const sent = await Message.find({ from: me }).select('to text createdAt').lean();
+    const received = await Message.find({ to: me }).select('from text createdAt').lean();
+
+    const map = {};
+
+    sent.forEach(m => {
+      if (!map[m.to] || map[m.to].createdAt < m.createdAt) {
+        map[m.to] = { username: m.to, lastMessage: m.text, createdAt: m.createdAt };
+      }
+    });
+
+    received.forEach(m => {
+      if (!map[m.from] || map[m.from].createdAt < m.createdAt) {
+        map[m.from] = { username: m.from, lastMessage: m.text, createdAt: m.createdAt };
+      }
+    });
+
+    const chats = Object.values(map).sort((a, b) => b.createdAt - a.createdAt);
+
+    res.json(chats);
+  } catch (e) {
+    console.error('GET /chats ERROR', e);
+    res.status(500).json([]);
+  }
+});
+
+app.get('/messages/:username', authMiddleware, async (req, res) => {
+  try {
+    const me = req.user.username;
+    const other = req.params.username;
+
+    const msgs = await Message.find({
+      $or: [
+        { from: me, to: other },
+        { from: other, to: me }
+      ]
+    }).sort({ createdAt: 1 });
+
+    res.json(msgs);
+  } catch (e) {
+    console.error('GET /messages ERROR:', e);
+    res.status(500).json([]);
+  }
+});
+
+app.post('/messages', authMiddleware, async (req, res) => {
+  try {
+    const { to, text } = req.body;
+    const from = req.user.username;
+
+    const msg = await Message.create({
+      from,
+      to,
+      text,
+      createdAt: new Date()
+    });
+
+    res.json({ message: msg });
+  } catch (e) {
+    console.error('POST /messages ERROR:', e);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+app.get('/users/search', authMiddleware, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (!q) return res.json([]);
+
+    const users = await User.find({
+      username: { $regex: q, $options: 'i' }
+    })
+      .select('username avatar')
+      .limit(20)
+      .lean();
+
+    res.json(users.map(u => ({
+      id: String(u._id),
+      username: u.username,
+      avatar: u.avatar || null
+    })));
+  } catch (e) {
+    console.error('USER SEARCH ERROR:', e);
+    res.status(500).json([]);
+  }
+});
+
+app.put('/auth/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ msg: 'Barcha maydonlar majburiy' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ msg: 'Yangi parol kamida 6 belgidan iborat bo‘lishi kerak' });
+    }
+
+    const user = await User.findById(req.user.id).select('+password +tokenVersion');
+    if (!user) return res.status(404).json({ msg: 'Foydalanuvchi topilmadi' });
+
+    const ok = await user.comparePassword(currentPassword);
+    if (!ok) {
+      return res.status(400).json({ msg: 'Joriy parol noto‘g‘ri' });
+    }
+
+    user.password = newPassword;
+    user.tokenVersion = (user.tokenVersion || 0) + 1; // revoke old tokens
+    await user.save();
+
+    clearAuthCookies(res); // tokens invalidated; require re-login or refresh via cookie route
+
+    res.json({ msg: 'Parol muvaffaqiyatli yangilandi' });
+  } catch (e) {
+    console.error('CHANGE PASSWORD ERROR:', e);
+    res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
 
 // -----------------
 // Socket.IO (with Redis adapter if available)
@@ -1027,13 +1387,8 @@ const io = new Server(server, {
   cors: {
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-
-      const allowed = ALLOWED_ORIGINS.some(o =>
-        origin === o || origin.startsWith(o)
-      );
-
+      const allowed = ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o));
       if (allowed) return callback(null, true);
-
       console.log("SOCKET CORS BLOCKED:", origin);
       return callback(null, false);
     },
@@ -1042,7 +1397,6 @@ const io = new Server(server, {
   }
 });
 
-// Redis adapter (ixtiyoriy)
 (async function attachRedisAdapter() {
   if (!redisAvailable || !redisClient) return;
   try {
@@ -1053,12 +1407,27 @@ const io = new Server(server, {
     console.warn('Socket.IO adapter error', e.message || e);
   }
 })();
-// Socket auth middleware (token faqat cookie'dan olinadi)
-// NOTE: cookie parsing changed to accessToken
+
+// robust cookie parser for socket requests
+function parseCookieHeader(cookieHeader) {
+  const map = {};
+  if (!cookieHeader) return map;
+  cookieHeader.split(';').forEach(pair => {
+    const idx = pair.indexOf('=');
+    if (idx < 0) return;
+    const k = pair.slice(0, idx).trim();
+    const v = pair.slice(idx + 1).trim();
+    try { map[k] = decodeURIComponent(v); } catch { map[k] = v; }
+  });
+  return map;
+}
+
+// Socket auth middleware: require accessToken cookie only
 io.use(async (socket, next) => {
   try {
-    const cookie = socket.request.headers.cookie || "";
-    const token = cookie.match(/accessToken=([^;]+)/)?.[1];
+    const cookieHeader = socket.request.headers.cookie || "";
+    const cookies = parseCookieHeader(cookieHeader);
+    const token = cookies.accessToken;
     if (!token) return next(new Error('Token topilmadi'));
 
     const payload = jwt.verify(token, JWT_SECRET);
@@ -1081,11 +1450,9 @@ io.use(async (socket, next) => {
   }
 });
 
-
 // manage online count
 let onlineCount = 0;
 
-// Socket connection
 io.on('connection', socket => {
   onlineCount++;
 
@@ -1099,8 +1466,6 @@ io.on('connection', socket => {
 
   console.log("Socket connected:", username);
 
-
-  // manage online set (Redis-backed if available)
   (async () => {
     try {
       if (redisAvailable && redisClient) {
@@ -1146,24 +1511,8 @@ io.on('connection', socket => {
 });
 
 // -----------------
-// Graceful shutdown
+// Follow check, stats, misc
 // -----------------
-async function shutdown() {
-  try {
-    console.log('Shutting down...');
-    await mongoose.disconnect();
-    server.close(() => {
-      console.log('HTTP server closed');
-      process.exit(0);
-    });
-    setTimeout(() => process.exit(1), 10000);
-  } catch (e) {
-    console.error('Shutdown error', e);
-    process.exit(1);
-  }
-}
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
 app.get('/follow/check/:identifier', authMiddleware, async (req, res) => {
   try {
     const id = req.user.id;
@@ -1182,436 +1531,6 @@ app.get('/follow/check/:identifier', authMiddleware, async (req, res) => {
     res.json({ isFollowing: !!exists });
   } catch (e) {
     console.error('FOLLOW CHECK ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/posts/reels', async (req, res) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page || '1'));
-    const limit = Math.max(1, Math.min(20, parseInt(req.query.limit || '5')));
-
-    // COOKIE-BASED auth (was header-based)
-    let userId = null;
-    if (req.cookies?.accessToken) {
-      try {
-        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
-        userId = payload.id;
-      } catch {}
-    }
-
-    const query = { status: 'approved', type: 'video' };
-
-    const docs = await Post.find(query)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
-    const ids = docs.map(p => p._id);
-
-    let likedSet = new Set();
-    if (userId && ids.length) {
-      const likes = await Like.find({ postId: { $in: ids }, userId })
-        .select('postId')
-        .lean();
-      likes.forEach(l => likedSet.add(String(l.postId)));
-    }
-
-    const total = await Post.countDocuments(query);
-
-    res.json({
-      posts: docs.map(p => ({
-        ...p,
-        id: String(p._id),
-        userId: String(p.userId),
-        // FIX: use _id (not _1)
-        liked: userId ? likedSet.has(String(p._id)) : false
-      })),
-      hasMore: page * limit < total
-    });
-  } catch (e) {
-    console.error('GET /posts/reels ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
- // Attach per-route view limiter (prevents scripted view inflation)
-app.post('/posts/:id/view', viewLimiter, async (req, res) => {
-  try {
-    // COOKIE-BASED viewer detection (was header-based)
-    let viewer = req.ip;
-    if (req.cookies?.accessToken) {
-      try {
-        const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
-        viewer = payload.id;
-      } catch {}
-    }
-
-    // Atomically increment views only if this viewer hasn't been recorded yet
-    const result = await Post.updateOne(
-      { _id: req.params.id, viewedBy: { $ne: viewer } },
-      { $inc: { views: 1 }, $push: { viewedBy: viewer } }
-    );
-
-    res.json({ viewed: result.modifiedCount === 1 });
-  } catch (e) {
-    console.error('VIEW ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-
-app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
-  try {
-    const postId = req.params.id;
-
-    const comments = await Comment.find({ postId })
-      .sort({ createdAt: 1 })
-      .limit(200)
-      .lean();
-
-    res.json({
-      comments: comments.map(c => ({
-        id: String(c._id),
-        user: c.user,        // MUHIM
-        text: c.text,
-        createdAt: c.createdAt
-      }))
-    });
-
-  } catch (e) {
-    console.error('GET COMMENTS ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/profile/:username', async (req, res) => {
-  try {
-    const u = await User.findOne({ username: req.params.username }).lean();
-    if (!u) return res.status(404).json({ msg: 'User not found' });
-
-    const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
-    const followers = await Follow.countDocuments({ followingId: u._id });
-    const following = await Follow.countDocuments({ followerId: u._id });
-
-    res.json({
-      username: u.username,
-      avatar: u.avatar || null,
-      bio: u.bio || '',
-      website: u.website || '',
-      posts: postsCount,
-      followers,
-      following
-    });
-  } catch (e) {
-    console.error('GET PROFILE ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/posts/user/:username', async (req, res) => {
-  try {
-    const u = await User.findOne({ username: req.params.username }).select('_id username');
-    if (!u) return res.json({ posts: [] });
-
-    const posts = await Post.find({ userId: u._id, status: 'approved' })
-      .sort({ createdAt: -1 })
-      .lean();
-
-    res.json({
-      posts: posts.map(p => ({
-        ...p,
-        id: String(p._id),
-        user: u.username,
-        username: u.username,
-        userId: String(p.userId)
-      }))
-    });
-  } catch (e) {
-    console.error('GET USER POSTS ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-
-app.get('/profile/:username/followers', async (req, res) => {
-  try {
-    const u = await User.findOne({ username: req.params.username }).select('_id username');
-    if (!u) return res.json([]);
-
-    const followers = await Follow.find({ followingId: u._id })
-      .populate('followerId', 'username avatar')
-      .lean();
-
-    res.json(followers.map(f => ({
-      username: f.followerId.username,
-      avatar: f.followerId.avatar || null
-    })));
-  } catch (e) {
-    console.error('GET FOLLOWERS ERROR:', e);
-    res.status(500).json([]);
-  }
-});
-app.get('/profile/:username/following', async (req, res) => {
-  try {
-    const u = await User.findOne({ username: req.params.username }).select('_id username');
-    if (!u) return res.json([]);
-
-    const following = await Follow.find({ followerId: u._id })
-      .populate('followingId', 'username avatar')
-      .lean();
-
-    res.json(following.map(f => ({
-      username: f.followingId.username,
-      avatar: f.followingId.avatar || null
-    })));
-  } catch (e) {
-    console.error('GET FOLLOWING ERROR:', e);
-    res.status(500).json([]);
-  }
-});
-app.put('/profile', authMiddleware, async (req, res) => {
-  try {
-    const { bio = "", website = "" } = req.body;
-
-    await User.findByIdAndUpdate(req.user.id, {
-      $set: {
-        bio: String(bio).slice(0, 160),
-        website: String(website).slice(0, 200)
-      }
-    });
-
-    // profile update may affect feeds for this user
-    invalidateUserPostsCache(req.user.id);
-
-    res.json({ msg: 'Profile updated' });
-  } catch (e) {
-    console.error('PROFILE UPDATE ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-// =======================
-// MESSAGES API
-// =======================
-
-// Chat list
-app.get('/chats', authMiddleware, async (req, res) => {
-  try {
-    const me = req.user.username;
-
-    const sent = await Message.find({ from: me }).select('to text createdAt').lean();
-    const received = await Message.find({ to: me }).select('from text createdAt').lean();
-
-    const map = {};
-
-    sent.forEach(m => {
-      if (!map[m.to] || map[m.to].createdAt < m.createdAt) {
-        map[m.to] = { username: m.to, lastMessage: m.text, createdAt: m.createdAt };
-      }
-    });
-
-    received.forEach(m => {
-      if (!map[m.from] || map[m.from].createdAt < m.createdAt) {
-        map[m.from] = { username: m.from, lastMessage: m.text, createdAt: m.createdAt };
-      }
-    });
-
-    const chats = Object.values(map).sort((a, b) => b.createdAt - a.createdAt);
-
-    res.json(chats);
-  } catch (e) {
-    console.error('GET /chats ERROR', e);
-    res.status(500).json([]);
-  }
-});
-
-// Load messages
-app.get('/messages/:username', authMiddleware, async (req, res) => {
-  try {
-    const me = req.user.username;
-    const other = req.params.username;
-
-    const msgs = await Message.find({
-      $or: [
-        { from: me, to: other },
-        { from: other, to: me }
-      ]
-    }).sort({ createdAt: 1 });
-
-    res.json(msgs);
-  } catch (e) {
-    console.error('GET /messages ERROR:', e);
-    res.status(500).json([]);
-  }
-});
-
-// Send message
-app.post('/messages', authMiddleware, async (req, res) => {
-  try {
-    const { to, text } = req.body;
-    const from = req.user.username;
-
-    const msg = await Message.create({
-      from,
-      to,
-      text,
-      createdAt: new Date()
-    });
-
-    res.json({ message: msg });
-  } catch (e) {
-    console.error('POST /messages ERROR:', e);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-app.get('/users/search', authMiddleware, async (req, res) => {
-  try {
-    const q = String(req.query.q || '').trim().toLowerCase();
-    if (!q) return res.json([]);
-
-    const users = await User.find({
-      username: { $regex: q, $options: 'i' }
-    })
-      .select('username avatar')
-      .limit(20)
-      .lean();
-
-    res.json(users.map(u => ({
-      id: String(u._id),
-      username: u.username,
-      avatar: u.avatar || null
-    })));
-  } catch (e) {
-    console.error('USER SEARCH ERROR:', e);
-    res.status(500).json([]);
-  }
-});
-app.put('/auth/change-password', authMiddleware, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ msg: 'Barcha maydonlar majburiy' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ msg: 'Yangi parol kamida 6 belgidan iborat bo‘lishi kerak' });
-    }
-
-    // foydalanuvchini eski paroli bilan yuklaymiz
-    const user = await User.findById(req.user.id).select('+password +tokenVersion');
-    if (!user) return res.status(404).json({ msg: 'Foydalanuvchi topilmadi' });
-
-    const ok = await user.comparePassword(currentPassword);
-    if (!ok) {
-      return res.status(400).json({ msg: 'Joriy parol noto‘g‘ri' });
-    }
-
-    // yangi parolni qo‘yamiz (pre("save") hash qiladi)
-    user.password = newPassword;
-    user.tokenVersion = (user.tokenVersion || 0) + 1; // eski tokenlarni bekor qilamiz
-    await user.save();
-
-    res.json({ msg: 'Parol muvaffaqiyatli yangilandi' });
-  } catch (e) {
-    console.error('CHANGE PASSWORD ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/admin/posts',
-  adminDomainOnly,
-  authMiddleware,
-  adminMiddleware,
-  adminIpOnly,
-  async (req, res) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page || '1'));
-    const limit = Math.min(50, parseInt(req.query.limit || '20'));
-
-    const posts = await Post.find({})
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
-    res.json(posts);
-  } catch (e) {
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-
-app.delete('/admin/posts/:id',
-  adminDomainOnly,
-  authMiddleware,
-  adminMiddleware,
-  adminIpOnly,
-  async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
-
-    for (const m of post.media || []) {
-      // try/catch per file
-      try {
-        const rel = m.url.replace(MEDIA_BASE_URL + '/media/', '');
-        const disk = path.join(PERSISTENT_MEDIA_ROOT, rel);
-        if (fs.existsSync(disk)) fs.unlinkSync(disk);
-      } catch (e) { /* ignore file removal errors */ }
-    }
-
-    await Post.deleteOne({ _id: post._id });
-
-    invalidateAllPostsCache();
-
-    res.json({ msg: 'Post va media to‘liq o‘chirildi' });
-  } catch (e) {
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/posts/:id', async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id).lean();
-    if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
-    res.json({
-      ...post,
-      id: String(post._id),
-      user: post.username,
-      userId: String(post.userId)
-    });
-  } catch (e) {
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/admin/media',
-  adminDomainOnly,
-  authMiddleware,
-  adminMiddleware,
-  adminIpOnly,
-  async (req, res) => {
-  try {
-    const files = [];
-
-    const walk = dir => {
-      fs.readdirSync(dir).forEach(f => {
-        const full = path.join(dir, f);
-        if (fs.statSync(full).isDirectory()) walk(full);
-        else files.push(full.replace(PERSISTENT_MEDIA_ROOT, ''));
-      });
-    };
-
-    walk(PERSISTENT_MEDIA_ROOT);
-
-    res.json(files);
-  } catch (e) {
-    res.status(500).json({ msg: 'Server xatosi' });
-  }
-});
-app.get('/posts/:id', async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id).lean();
-    if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
-    res.json({
-      ...post,
-      id: String(post._id),
-      user: post.username,
-      userId: String(post.userId)
-    });
-  } catch (e) {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
@@ -1636,6 +1555,7 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.status(401).json({ msg: 'Unauthorized' });
   }
 });
+
 app.get('/users/online', authMiddleware, (req, res) => {
   res.json(Array.from(global.onlineUsers));
 });
