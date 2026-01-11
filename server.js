@@ -69,8 +69,12 @@ const RefreshToken = require('./models/RefreshToken');
 // Security middlewares
 // -----------------
 app.use(helmet({
-  contentSecurityPolicy: false // tune CSP in production as needed
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false
 }));
+
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -647,10 +651,7 @@ app.get('/media/:folder/:file', (req, res) => {
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
     res.setHeader('Vary', 'Origin');
 
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-
+   
     const { folder, file } = req.params;
     const baseDir = path.join(PERSISTENT_MEDIA_ROOT, folder);
     const safePath = safeResolveWithin(baseDir, file);
