@@ -641,9 +641,7 @@ app.get('/media/:folder/:file', (req, res) => {
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
     res.setHeader('Vary', 'Origin');
 
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+   
 
     const { folder, file } = req.params;
     const baseDir = path.join(PERSISTENT_MEDIA_ROOT, folder);
