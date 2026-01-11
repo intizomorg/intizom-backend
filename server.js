@@ -73,7 +73,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ["https://intizom.org"],
+  origin: "https://intizom.org",
   credentials: true
 }));
 
@@ -282,42 +282,43 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  const isProd = process.env.NODE_ENV === "production";
-
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
     path: "/",
     maxAge: 15 * 60 * 1000
   });
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
     path: "/",
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
 function clearAuthCookies(res) {
-  const isProd = process.env.NODE_ENV === "production";
-
   res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
     path: "/"
   });
 
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
+    domain: ".intizom.org",
     path: "/"
   });
 }
+
 
 
 
