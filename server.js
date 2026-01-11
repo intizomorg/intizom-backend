@@ -1095,6 +1095,25 @@ app.delete('/admin/posts/:id',
     }
   }
 );
+app.get(
+  "/admin/posts",
+  adminDomainOnly,
+  authMiddleware,
+  adminMiddleware,
+  adminIpOnly,
+  async (req, res) => {
+    try {
+      const posts = await Post.find({ status: { $ne: "approved" } })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+
+      res.json(posts);
+    } catch (e) {
+      res.status(500).json({ msg: "Postlarni olishda xatolik" });
+    }
+  }
+);
 
 // -----------------
 // View endpoint (atomic views + viewer dedupe)
