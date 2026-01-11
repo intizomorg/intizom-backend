@@ -285,32 +285,18 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  // clear legacy 'token' cookie explicitly
-  res.cookie('token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 0
-  });
-
-  // set accessToken
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 15 * 60 * 1000
   });
 
-  // set refreshToken (scoped to refresh endpoint)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
@@ -322,25 +308,15 @@ function clearAuthCookies(res) {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
   });
+
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
-    maxAge: 0
-  });
-  // legacy
-  res.cookie('token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
     maxAge: 0
   });
 }
@@ -359,16 +335,6 @@ async function authMiddleware(req, res, next) {
     if ((user.tokenVersion || 0) !== (payload.tv || 0)) return res.status(401).json({ msg: 'Token revoked' });
 
     req.user = { id: String(user._id), username: user.username, role: user.role };
-
-    // user-level lightweight rate-limiter
-    try {
-      const uid = String(req.user.id);
-      let meta = userRateCache.get(uid) || { count: 0, resetAt: Date.now() + 60 * 1000 };
-      if (Date.now() > meta.resetAt) meta = { count: 0, resetAt: Date.now() + 60 * 1000 };
-      meta.count = (meta.count || 0) + 1;
-      userRateCache.set(uid, meta);
-      if (meta.count > 120) return res.status(429).json({ msg: 'Too many requests (user rate limit)' });
-    } catch (e) { /* best-effort only */ }
 
     return next();
   } catch (e) {
