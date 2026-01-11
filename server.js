@@ -285,41 +285,42 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  res.cookie('accessToken', accessToken, {
+  const isProd = process.env.NODE_ENV === 'production';
+
+  const base = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    path: '/',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    path: '/'
+  };
+
+  res.cookie('accessToken', accessToken, {
+    ...base,
     maxAge: 15 * 60 * 1000
   });
 
   res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    path: '/auth/refresh',
+    ...base,
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
+
 // Clear auth cookies on logout
 function clearAuthCookies(res) {
-  res.cookie('accessToken', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    path: '/',
-    maxAge: 0
-  });
+  const isProd = process.env.NODE_ENV === 'production';
 
-  res.cookie('refreshToken', '', {
+  const base = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    path: '/auth/refresh',
-    maxAge: 0
-  });
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    path: '/'
+  };
+
+  res.clearCookie('accessToken', base);
+  res.clearCookie('refreshToken', base);
 }
+
 
 // -----------------
 // REPLACED: authMiddleware (uses accessToken cookie)
