@@ -73,13 +73,10 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    const allowed = ALLOWED_ORIGINS.includes(origin);
-    callback(null, allowed);
-  },
+  origin: ["https://intizom.org"],
   credentials: true
 }));
+
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -285,42 +282,43 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = process.env.NODE_ENV === "production";
 
-  const base = {
+  res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    domain: '.intizom.org',
-    path: '/'
-  };
-
-  res.cookie('accessToken', accessToken, {
-    ...base,
+    sameSite: "lax",
+    path: "/",
     maxAge: 15 * 60 * 1000
   });
 
-  res.cookie('refreshToken', refreshToken, {
-    ...base,
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: "lax",
+    path: "/",
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
 function clearAuthCookies(res) {
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = process.env.NODE_ENV === "production";
 
-  const base = {
+  res.clearCookie("accessToken", {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    domain: '.intizom.org',
-    path: '/'
-  };
+    sameSite: "lax",
+    path: "/"
+  });
 
-  res.clearCookie('accessToken', base);
-  res.clearCookie('refreshToken', base);
-  res.clearCookie('token', base);
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: "lax",
+    path: "/"
+  });
 }
+
 
 
 
