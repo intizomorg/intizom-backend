@@ -306,24 +306,24 @@ function setAuthCookies(res, accessToken, refreshToken) {
   });
 }
 
-
 function clearAuthCookies(res) {
+  const isProd = process.env.NODE_ENV === 'production';
+
   const base = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     domain: '.intizom.org',
     path: '/'
   };
 
   res.clearCookie('accessToken', base);
   res.clearCookie('refreshToken', base);
+  res.clearCookie('token', base);
 }
 
 
-  // eski legacy cookie majburan yo‘q qilinadi
-  res.clearCookie("refreshToken", { ...base, path: "/auth/refresh" });
-  res.clearCookie("token", base);
+
 
 
 
