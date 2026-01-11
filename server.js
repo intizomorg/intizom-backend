@@ -285,65 +285,46 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  // clear legacy 'token' cookie explicitly
-  res.cookie('token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 0
-  });
+  const isProd = process.env.NODE_ENV === "production";
 
-  // set accessToken
-  res.cookie('accessToken', accessToken, {
+  const base = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    domain: isProd ? ".intizom.org" : undefined,
+    path: "/"
+  };
+
+  res.cookie("accessToken", accessToken, {
+    ...base,
     maxAge: 15 * 60 * 1000
   });
 
-  // set refreshToken (scoped to refresh endpoint)
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/auth/refresh',
+  res.cookie("refreshToken", refreshToken, {
+    ...base,
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
-// Clear auth cookies on logout
 function clearAuthCookies(res) {
-  res.cookie('accessToken', '', {
+  const isProd = process.env.NODE_ENV === "production";
+
+  const base = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 0
-  });
-  res.cookie('refreshToken', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/auth/refresh',
-    maxAge: 0
-  });
-  // legacy
-  res.cookie('token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 0
-  });
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    domain: isProd ? ".intizom.org" : undefined,
+    path: "/"
+  };
+
+  res.clearCookie("accessToken", base);
+  res.clearCookie("refreshToken", base);
+
+  // eski legacy cookie majburan yo‘q qilinadi
+  res.clearCookie("refreshToken", { ...base, path: "/auth/refresh" });
+  res.clearCookie("token", base);
 }
+
 
 // -----------------
 // REPLACED: authMiddleware (uses accessToken cookie)
