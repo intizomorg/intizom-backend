@@ -51,7 +51,7 @@ if (!process.env.JWT_SECRET) {
 const JWT_SECRET = process.env.JWT_SECRET;
 const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
 const PERSISTENT_MEDIA_ROOT = process.env.PERSISTENT_MEDIA_ROOT || path.join(__dirname, 'media');
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()).filter(Boolean);
+
 connectDB();
 
 // -----------------
@@ -72,10 +72,24 @@ app.use(helmet({
   contentSecurityPolicy: false // tune CSP in production as needed
 }));
 
-app.use(cors({
-  origin: ['https://intizom.org'],
-  credentials: true
-}));
+const ALLOWED_ORIGINS = [
+  'https://intizom.org',
+  'https://www.intizom.org'
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  }
+
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
 
 
 app.use(express.json({ limit: '1mb' }));
@@ -1357,14 +1371,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      const allowed = ALLOWED_ORIGINS.includes(origin);
-      if (allowed) return callback(null, true);
-      console.log("SOCKET CORS BLOCKED:", origin);
-      callback(null, false);
-    },
-    methods: ['GET', 'POST'],
+    origin: ['https://intizom.org', 'https://www.intizom.org'],
     credentials: true
   }
 });
