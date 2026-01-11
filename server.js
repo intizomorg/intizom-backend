@@ -73,13 +73,10 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    const allowed = ALLOWED_ORIGINS.includes(origin);
-    callback(null, allowed);
-  },
+  origin: ['https://intizom.org'],
   credentials: true
 }));
+
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -285,65 +282,52 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  // clear legacy 'token' cookie explicitly
-  res.cookie('token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 0
-  });
-
-  // set accessToken
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 15 * 60 * 1000
   });
 
-  // set refreshToken (scoped to refresh endpoint)
- res.cookie('refreshToken', refreshToken, {
-  httpOnly: true,
-  secure: true,
-  sameSite: 'none',
-  domain: '.intizom.org',
-  path: '/',
-  maxAge: 30 * 24 * 60 * 60 * 1000
-});
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/auth/refresh',
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  });
 }
 
-// Clear auth cookies on logout
+
+// Clear auth cookies on logout (FIXED)
 function clearAuthCookies(res) {
   res.cookie('accessToken', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
   });
+
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 0
   });
-  // legacy
+
+  // legacy token cleanup (no domain!)
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
   });
 }
+
 
 // -----------------
 // REPLACED: authMiddleware (uses accessToken cookie)
