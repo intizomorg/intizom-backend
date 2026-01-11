@@ -74,15 +74,14 @@ app.use(helmet({
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin like mobile apps or curl
     if (!origin) return callback(null, true);
-    const allowed = ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o));
-    return callback(null, allowed);
+    const allowed = ALLOWED_ORIGINS.includes(origin);
+    callback(null, allowed);
   },
   credentials: true
 }));
 
-app.use(express.json({ limit: '1mb' })); // limit JSON size
+app.use(express.json({ limit: '1mb' }));
 
 // -----------------
 // Rate limiting
@@ -1387,15 +1386,16 @@ const io = new Server(server, {
   cors: {
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      const allowed = ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o));
+      const allowed = ALLOWED_ORIGINS.includes(origin);
       if (allowed) return callback(null, true);
       console.log("SOCKET CORS BLOCKED:", origin);
-      return callback(null, false);
+      callback(null, false);
     },
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
+
 
 (async function attachRedisAdapter() {
   if (!redisAvailable || !redisClient) return;
