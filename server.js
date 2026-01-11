@@ -1,10 +1,5 @@
 // server.js (production-minded MVP) — fixed & consolidated version
-// Required env:
-// - JWT_SECRET (required)
-// - MONGO_URL (recommended; but your ./db module may handle it)
-// - MEDIA_BASE_URL (optional, default http://localhost:5000)
-// - PERSISTENT_MEDIA_ROOT (optional, default path.join(__dirname, 'media'))
-// - REDIS_URL (optional)
+// CHANGED: routes moved under /api, cookie settings simplified (no domain), refresh path adjusted.
 
 const { LRUCache } = require('lru-cache');
 
@@ -36,6 +31,7 @@ const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
 
 const app = express();
+const router = express.Router(); // CHANGED: use router for API routes
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
 app.set('trust proxy', true);
@@ -72,8 +68,10 @@ app.use(helmet({
   contentSecurityPolicy: false // tune CSP in production as needed
 }));
 
+// CHANGED: keep CORS on app level but ensure dynamic origin check and credentials
 app.use(cors({
   origin: function (origin, callback) {
+    // allow non-browser requests (e.g., server-to-server) when origin is undefined
     if (!origin) return callback(null, true);
     const allowed = ALLOWED_ORIGINS.includes(origin);
     callback(null, allowed);
@@ -84,7 +82,7 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 
 // -----------------
-// Rate limiting
+// Rate limiting (kept as before)
 // -----------------
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -93,7 +91,6 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
-app.use('/auth', authLimiter);
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -101,9 +98,6 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
-app.use('/posts', apiLimiter);
-app.use('/follow', apiLimiter);
-app.use('/messages', apiLimiter);
 
 const viewLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -111,6 +105,12 @@ const viewLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+
+// CHANGED: Apply some limiters to router paths (not app), so they affect /api/*
+router.use('/auth', authLimiter);
+router.use('/posts', apiLimiter);
+router.use('/follow', apiLimiter);
+router.use('/messages', apiLimiter);
 
 // -----------------
 // Ensure media dirs
@@ -121,8 +121,6 @@ function ensureDir(p) {
 
 ensureDir(path.join(PERSISTENT_MEDIA_ROOT, 'videos'));
 ensureDir(path.join(PERSISTENT_MEDIA_ROOT, 'images'));
-
-// Note: AVATAR_ROOT and serving avatars statically removed — avatars will be uploaded to Cloudinary via memory upload.
 
 const cloudinary = require('cloudinary').v2;
 cloudinary.config({
@@ -283,35 +281,35 @@ async function createRefreshToken(user) {
   return rawToken;
 }
 
+// -----------------
 // Centralized cookie setter/clearer
+// -----------------
+// CHANGED: removed `domain` to avoid cross-subdomain cookie issues; using sameSite: 'lax'
 function setAuthCookies(res, accessToken, refreshToken) {
   // clear legacy 'token' cookie explicitly
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    sameSite: 'lax',
     path: '/',
     maxAge: 0
   });
 
-  // set accessToken
+  // set accessToken (path=/ so socket and front can read/send)
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    sameSite: 'lax',
     path: '/',
     maxAge: 15 * 60 * 1000
   });
 
-  // set refreshToken (scoped to refresh endpoint)
+  // set refreshToken (scoped to refresh endpoint under /api)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/auth/refresh',
+    sameSite: 'lax',
+    path: '/api/auth/refresh',
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
@@ -321,25 +319,22 @@ function clearAuthCookies(res) {
   res.cookie('accessToken', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    sameSite: 'lax',
     path: '/',
     maxAge: 0
   });
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/auth/refresh',
+    sameSite: 'lax',
+    path: '/api/auth/refresh',
     maxAge: 0
   });
   // legacy
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+    sameSite: 'lax',
     path: '/',
     maxAge: 0
   });
@@ -473,9 +468,9 @@ function invalidateUserPostsCache(userId) {
 }
 
 // -----------------
-// Routes: Auth
+// Routes: Auth (MOVED TO router)
 // -----------------
-app.post("/auth/register", authLimiter, async (req, res) => {
+router.post("/auth/register", async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
@@ -498,7 +493,7 @@ app.post("/auth/register", authLimiter, async (req, res) => {
   }
 });
 
-app.post("/auth/login", authLimiter, async (req, res) => {
+router.post("/auth/login", async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
@@ -523,7 +518,7 @@ app.post("/auth/login", authLimiter, async (req, res) => {
 });
 
 // Refresh endpoint: rotate refresh token and return new access token
-app.post('/auth/refresh', async (req, res) => {
+router.post('/auth/refresh', async (req, res) => {
   try {
     const raw = req.cookies?.refreshToken;
     if (!raw) return res.status(401).json({ msg: 'Refresh token topilmadi' });
@@ -556,7 +551,7 @@ app.post('/auth/refresh', async (req, res) => {
 });
 
 // logout / revoke tokens for user by incrementing tokenVersion
-app.post('/auth/logout', authMiddleware, async (req, res) => {
+router.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
     try { await RefreshToken.deleteMany({ userId: req.user.id }); } catch (e) { console.warn('Failed to remove refresh tokens', e.message || e); }
@@ -572,9 +567,9 @@ app.post('/auth/logout', authMiddleware, async (req, res) => {
 });
 
 // -----------------
-// Uploads
+// Uploads (router)
 // -----------------
-app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async (req, res) => {
+router.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ msg: 'Avatar yuklanmadi' });
 
@@ -601,7 +596,7 @@ app.post('/upload/avatar', authMiddleware, avatarUpload.single('avatar'), async 
   }
 });
 
-app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, res) => {
+router.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, res) => {
   try {
     const files = req.files || [];
     if (!files.length) return res.status(400).json({ msg: "Media yuklanmadi" });
@@ -659,7 +654,8 @@ app.post('/upload', authMiddleware, mediaUpload.array('media', 5), async (req, r
 });
 
 // -----------------
-// Media streaming (single implementation)
+// Media streaming (single implementation) — kept at root (app), not under /api
+// This lets media URLs be like https://www.intizom.org/media/...
 // -----------------
 app.get('/media/:folder/:file', (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -728,9 +724,9 @@ app.get('/media/:folder/:file', (req, res) => {
 });
 
 // -----------------
-// Posts listing optimized for scale
+// Posts listing optimized for scale (router)
 // -----------------
-app.get('/posts', async (req, res) => {
+router.get('/posts', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1'));
     const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '10')));
@@ -816,9 +812,9 @@ app.get('/posts', async (req, res) => {
 });
 
 // -----------------
-// Specific endpoints (kept singular / deduped)
+// Specific endpoints (kept singular / deduped) under router
 // -----------------
-app.get('/posts/reels', async (req, res) => {
+router.get('/posts/reels', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1'));
     const limit = Math.max(1, Math.min(20, parseInt(req.query.limit || '5')));
@@ -864,7 +860,7 @@ app.get('/posts/reels', async (req, res) => {
   }
 });
 
-app.get('/posts/:id', async (req, res) => {
+router.get('/posts/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id).lean();
     if (!post) return res.status(404).json({ msg: 'Post topilmadi' });
@@ -880,7 +876,7 @@ app.get('/posts/:id', async (req, res) => {
 });
 
 // Like / Unlike / Comment endpoints
-app.post('/posts/:id/like', authMiddleware, async (req, res) => {
+router.post('/posts/:id/like', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user.id;
@@ -901,7 +897,7 @@ app.post('/posts/:id/like', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
+router.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user.id;
@@ -920,7 +916,7 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
+router.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
     const text = String(req.body.text || '').trim().slice(0, 2000);
@@ -942,7 +938,7 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
 });
 
 // Follow / Unfollow
-app.post('/follow/:username', authMiddleware, async (req, res) => {
+router.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
     const username = req.params.username;
@@ -967,7 +963,7 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/unfollow/:username', authMiddleware, async (req, res) => {
+router.post('/unfollow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
     const username = req.params.username;
@@ -989,8 +985,8 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
   }
 });
 
-// Admin endpoints (delete user / posts)
-app.delete('/admin/users/:id',
+// Admin endpoints (delete user / posts) under router
+router.delete('/admin/users/:id',
   adminDomainOnly,
   authMiddleware,
   adminMiddleware,
@@ -1016,7 +1012,7 @@ app.delete('/admin/users/:id',
   }
 );
 
-app.post('/admin/posts/:id/approve',
+router.post('/admin/posts/:id/approve',
   adminDomainOnly,
   authMiddleware,
   adminMiddleware,
@@ -1034,7 +1030,7 @@ app.post('/admin/posts/:id/approve',
   }
 );
 
-app.delete('/admin/posts/:id',
+router.delete('/admin/posts/:id',
   adminDomainOnly,
   authMiddleware,
   adminMiddleware,
@@ -1064,7 +1060,8 @@ app.delete('/admin/posts/:id',
     }
   }
 );
-app.get(
+
+router.get(
   "/admin/posts",
   adminDomainOnly,
   authMiddleware,
@@ -1084,11 +1081,10 @@ app.get(
   }
 );
 
-
 // -----------------
-// View endpoint (atomic views + viewer dedupe)
+// View endpoint (atomic views + viewer dedupe) under router
 // -----------------
-app.post('/posts/:id/view', viewLimiter, async (req, res) => {
+router.post('/posts/:id/view', viewLimiter, async (req, res) => {
   try {
     let viewer = req.ip;
     if (req.cookies?.accessToken) {
@@ -1110,8 +1106,8 @@ app.post('/posts/:id/view', viewLimiter, async (req, res) => {
   }
 });
 
-// Comments, profile, search, messages (kept as before)
-app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
+// Comments, profile, search, messages (moved to router)
+router.get('/posts/:id/comments', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
 
@@ -1135,7 +1131,7 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/profile/:username', async (req, res) => {
+router.get('/profile/:username', async (req, res) => {
   try {
     const u = await User.findOne({ username: req.params.username }).lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
@@ -1159,7 +1155,7 @@ app.get('/profile/:username', async (req, res) => {
   }
 });
 
-app.get('/posts/user/:username', async (req, res) => {
+router.get('/posts/user/:username', async (req, res) => {
   try {
     const u = await User.findOne({ username: req.params.username }).select('_id username');
     if (!u) return res.json({ posts: [] });
@@ -1183,7 +1179,7 @@ app.get('/posts/user/:username', async (req, res) => {
   }
 });
 
-app.get('/profile/:username/followers', async (req, res) => {
+router.get('/profile/:username/followers', async (req, res) => {
   try {
     const u = await User.findOne({ username: req.params.username }).select('_id username');
     if (!u) return res.json([]);
@@ -1202,7 +1198,7 @@ app.get('/profile/:username/followers', async (req, res) => {
   }
 });
 
-app.get('/profile/:username/following', async (req, res) => {
+router.get('/profile/:username/following', async (req, res) => {
   try {
     const u = await User.findOne({ username: req.params.username }).select('_id username');
     if (!u) return res.json([]);
@@ -1221,7 +1217,7 @@ app.get('/profile/:username/following', async (req, res) => {
   }
 });
 
-app.put('/profile', authMiddleware, async (req, res) => {
+router.put('/profile', authMiddleware, async (req, res) => {
   try {
     const { bio = "", website = "" } = req.body;
 
@@ -1242,7 +1238,7 @@ app.put('/profile', authMiddleware, async (req, res) => {
 });
 
 // Messages API
-app.get('/chats', authMiddleware, async (req, res) => {
+router.get('/chats', authMiddleware, async (req, res) => {
   try {
     const me = req.user.username;
 
@@ -1272,7 +1268,7 @@ app.get('/chats', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/messages/:username', authMiddleware, async (req, res) => {
+router.get('/messages/:username', authMiddleware, async (req, res) => {
   try {
     const me = req.user.username;
     const other = req.params.username;
@@ -1291,7 +1287,7 @@ app.get('/messages/:username', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/messages', authMiddleware, async (req, res) => {
+router.post('/messages', authMiddleware, async (req, res) => {
   try {
     const { to, text } = req.body;
     const from = req.user.username;
@@ -1310,7 +1306,7 @@ app.post('/messages', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/users/search', authMiddleware, async (req, res) => {
+router.get('/users/search', authMiddleware, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim().toLowerCase();
     if (!q) return res.json([]);
@@ -1333,7 +1329,7 @@ app.get('/users/search', authMiddleware, async (req, res) => {
   }
 });
 
-app.put('/auth/change-password', authMiddleware, async (req, res) => {
+router.put('/auth/change-password', authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
@@ -1500,9 +1496,9 @@ io.on('connection', socket => {
 });
 
 // -----------------
-// Follow check, stats, misc
+// Follow check, stats, misc (router)
 // -----------------
-app.get('/follow/check/:identifier', authMiddleware, async (req, res) => {
+router.get('/follow/check/:identifier', authMiddleware, async (req, res) => {
   try {
     const id = req.user.id;
     const target = req.params.identifier;
@@ -1524,7 +1520,7 @@ app.get('/follow/check/:identifier', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/stats', async (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
     const usersCount = await User.countDocuments();
     res.json({
@@ -1536,7 +1532,7 @@ app.get('/stats', async (req, res) => {
   }
 });
 
-app.get('/auth/me', authMiddleware, async (req, res) => {
+router.get('/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('username role');
     res.json(user);
@@ -1545,16 +1541,16 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/users/online', authMiddleware, (req, res) => {
+router.get('/users/online', authMiddleware, (req, res) => {
   res.json(Array.from(global.onlineUsers));
 });
 
-app.get('/users/all', authMiddleware, async (req, res) => {
+router.get('/users/all', authMiddleware, async (req, res) => {
   const users = await User.find().select('username avatar').lean();
   res.json(users);
 });
 
-app.get('/health', (req, res) => {
+router.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     uptime: process.uptime(),
@@ -1562,6 +1558,11 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage().rss
   });
 });
+
+// -----------------
+// Mount router under /api (CHANGED) — all API routes are under /api/*
+// -----------------
+app.use('/api', router);
 
 // -----------------
 // Start server
