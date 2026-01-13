@@ -1,14 +1,18 @@
 module.exports = function adminDomainOnly(req, res, next) {
-  const host = (req.headers.host || "").toLowerCase();
+  const origin = (req.headers.origin || "").toLowerCase();
+  const referer = (req.headers.referer || "").toLowerCase();
 
   const allowed = [
-    "admin-api.intizom.org",
-    "api.intizom.org" // PRODUCTION uchun majburiy
+    "https://intizom.org",
+    "https://www.intizom.org"
   ];
 
-  if (!allowed.includes(host)) {
-    console.log("ADMIN DOMAIN BLOCKED:", host);
-    return res.status(403).json({ msg: "Admin endpoint blocked by domain policy" });
+  const ok =
+    allowed.some(d => origin.startsWith(d)) ||
+    allowed.some(d => referer.startsWith(d));
+
+  if (!ok) {
+    return res.status(403).json({ msg: "Admin endpoint blocked" });
   }
 
   next();
