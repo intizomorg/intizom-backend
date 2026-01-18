@@ -1562,6 +1562,15 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage().rss
   });
 });
+app.get('/debug/outbound-ip', async (req, res) => {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json');
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
 
 // -----------------
 // Start server
