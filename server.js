@@ -75,11 +75,16 @@ app.use(helmet({
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    const allowed = ALLOWED_ORIGINS.includes(origin);
-    callback(null, allowed);
+
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true
 }));
+
 
 app.use(express.json({ limit: '1mb' }));
 
