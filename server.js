@@ -85,7 +85,6 @@ app.use(cors({
   credentials: true
 }));
 
-
 app.use(express.json({ limit: '1mb' }));
 
 // -----------------
@@ -394,7 +393,7 @@ async function adminMiddleware(req, res, next) {
 }
 
 // -----------------
-// Follow caching functions (keyed by userId)
+// Follow caching functions (keyed by userId)  [FIX: cache stores ONLY followingId strings]
 // -----------------
 async function getCachedFollowing(userId) {
   if (!userId) return null;
@@ -733,7 +732,7 @@ app.get('/media/:folder/:file', (req, res) => {
 });
 
 // -----------------
-// Posts listing optimized for scale
+// Posts listing optimized for scale  [FIX: follow set uses ONLY userIds + cache stays fresh after follow/unfollow]
 // -----------------
 app.get('/posts', async (req, res) => {
   try {
@@ -741,28 +740,28 @@ app.get('/posts', async (req, res) => {
     const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '10')));
 
     let currentUserId = null;
-    let currentUsername = null;
     let followingSet = new Set();
 
     if (req.cookies?.accessToken) {
       try {
         const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         currentUserId = payload.id;
-        currentUsername = payload.username;
+
         const cached = await getCachedFollowing(currentUserId);
-        if (cached) followingSet = cached;
-        else {
+        if (cached) {
+          followingSet = cached;
+        } else {
+          // IMPORTANT: store ONLY followingId strings (not usernames)
           const follows = await Follow.find({ followerId: currentUserId })
-  .select('followingId')
-  .lean();
+            .select('followingId')
+            .lean();
 
-const followingList = follows
-  .map(f => (f.followingId ? String(f.followingId) : null))
-  .filter(Boolean);
+          const followingList = follows
+            .map(f => (f.followingId ? String(f.followingId) : null))
+            .filter(Boolean);
 
-followingSet = new Set(followingList);
-await setCachedFollowing(currentUserId, followingList);
-
+          followingSet = new Set(followingList);
+          await setCachedFollowing(currentUserId, followingList);
         }
       } catch (e) { /* ignore auth parse errors */ }
     }
@@ -775,15 +774,16 @@ await setCachedFollowing(currentUserId, followingList);
     }
 
     const query = { status: 'approved' };
+
     if (req.query.feed === 'following' && currentUserId) {
       if (!followingSet || followingSet.size === 0) {
         const emptyResponse = { page, limit, posts: [] };
         postsCache.set(cacheKey, emptyResponse);
         return res.json(emptyResponse);
       }
+
       const userIdList = Array.from(followingSet).filter(s => mongoose.Types.ObjectId.isValid(s));
-      if (userIdList.length > 0) query.userId = { $in: userIdList };
-      else query.username = { $in: Array.from(followingSet) };
+      query.userId = { $in: userIdList };
     }
 
     const posts = await Post.find(query)
@@ -799,38 +799,28 @@ await setCachedFollowing(currentUserId, followingList);
       likes.forEach(l => likedSet.add(String(l.postId)));
     }
 
-   const results = posts.map(p => {
-  const pid = String(p._id);
+    const results = posts.map(p => {
+      const pid = String(p._id);
+      const authorId = p.userId ? String(p.userId) : '';
+      const authorUsername = p.username || '';
 
-  const authorId = p.userId ? String(p.userId) : '';
-  const authorUsername = p.username || '';
-
-  return {
-    id: pid,
-
-    userId: authorId,
-    username: authorUsername,
-    user: authorUsername, // frontend uchun qoldi
-
-    title: p.title,
-    description: p.description,
-    type: p.type,
-    media: p.media,
-    createdAt: p.createdAt,
-
-    views: p.views || 0,
-    commentsCount: p.commentsCount || 0,
-    likesCount: p.likesCount || 0,
-
-    liked: currentUserId ? likedSet.has(pid) : false,
-
-    // ✅ ASOSIY FIX SHU:
-    isFollowing: currentUserId && authorId
-      ? followingSet.has(authorId)
-      : false
-  };
-});
-
+      return {
+        id: pid,
+        userId: authorId,
+        username: authorUsername,
+        user: authorUsername, // frontend compatibility
+        title: p.title,
+        description: p.description,
+        type: p.type,
+        media: p.media,
+        createdAt: p.createdAt,
+        views: p.views || 0,
+        commentsCount: p.commentsCount || 0,
+        likesCount: p.likesCount || 0,
+        liked: currentUserId ? likedSet.has(pid) : false,
+        isFollowing: currentUserId && authorId ? followingSet.has(authorId) : false
+      };
+    });
 
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
@@ -967,7 +957,7 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   }
 });
 
-// Follow / Unfollow
+// Follow / Unfollow  [FIX: update following cache immediately so refresh shows Following]
 app.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
@@ -982,13 +972,14 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
       return res.status(400).json({ msg: 'O‘zingizni follow qila olmaysiz' });
 
     await Follow.create({ followerId, followingId });
-    try {
-  const cached = await getCachedFollowing(followerId);
-  const set = cached ? cached : new Set();
-  set.add(String(followingId));
-  await setCachedFollowing(followerId, Array.from(set));
-} catch {}
 
+    // refresh following cache NOW
+    try {
+      const cached = await getCachedFollowing(followerId);
+      const set = cached ? cached : new Set();
+      set.add(String(followingId));
+      await setCachedFollowing(followerId, Array.from(set));
+    } catch {}
 
     invalidateUserPostsCache(followerId);
 
@@ -1012,14 +1003,15 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
       followerId,
       followingId: targetUser._id
     });
-    try {
-  const cached = await getCachedFollowing(followerId);
-  if (cached) {
-    cached.delete(String(targetUser._id));
-    await setCachedFollowing(followerId, Array.from(cached));
-  }
-} catch {}
 
+    // refresh following cache NOW
+    try {
+      const cached = await getCachedFollowing(followerId);
+      if (cached) {
+        cached.delete(String(targetUser._id));
+        await setCachedFollowing(followerId, Array.from(cached));
+      }
+    } catch {}
 
     invalidateUserPostsCache(followerId);
 
@@ -1087,7 +1079,6 @@ app.delete('/admin/posts/:id',
 
       for (const m of post.media || []) {
         try {
-          // If media stored as local file under PERSISTENT_MEDIA_ROOT/media/... remove safely
           const rel = (m.url || '').replace(MEDIA_BASE_URL + '/media/', '');
           const disk = safeResolveWithin(PERSISTENT_MEDIA_ROOT, rel);
           if (disk && fs.existsSync(disk)) fs.unlinkSync(disk);
@@ -1105,6 +1096,7 @@ app.delete('/admin/posts/:id',
     }
   }
 );
+
 app.get(
   "/admin/posts",
   adminDomainOnly,
@@ -1124,7 +1116,6 @@ app.get(
     }
   }
 );
-
 
 // -----------------
 // View endpoint (atomic views + viewer dedupe)
@@ -1398,7 +1389,7 @@ app.put('/auth/change-password', authMiddleware, async (req, res) => {
     user.tokenVersion = (user.tokenVersion || 0) + 1; // revoke old tokens
     await user.save();
 
-    clearAuthCookies(res); // tokens invalidated; require re-login or refresh via cookie route
+    clearAuthCookies(res);
 
     res.json({ msg: 'Parol muvaffaqiyatli yangilandi' });
   } catch (e) {
@@ -1429,8 +1420,6 @@ const io = new Server(server, {
   }
 });
 
-
-
 (async function attachRedisAdapter() {
   if (!redisAvailable || !redisClient) return;
   try {
@@ -1442,7 +1431,6 @@ const io = new Server(server, {
   }
 })();
 
-// robust cookie parser for socket requests
 function parseCookieHeader(cookieHeader) {
   const map = {};
   if (!cookieHeader) return map;
@@ -1456,7 +1444,6 @@ function parseCookieHeader(cookieHeader) {
   return map;
 }
 
-// Socket auth middleware: require accessToken cookie only
 io.use(async (socket, next) => {
   try {
     const cookieHeader = socket.request.headers.cookie || "";
@@ -1484,7 +1471,6 @@ io.use(async (socket, next) => {
   }
 });
 
-// manage online count
 let onlineCount = 0;
 
 io.on('connection', socket => {
