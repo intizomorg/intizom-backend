@@ -752,10 +752,17 @@ app.get('/posts', async (req, res) => {
         const cached = await getCachedFollowing(currentUserId);
         if (cached) followingSet = cached;
         else {
-          const follows = await Follow.find({ $or: [{ followerId: currentUserId }, { follower: currentUsername }] }).select('followingId following');
-          const followingList = follows.map(f => (f.followingId ? String(f.followingId) : (f.following || '')));
-          followingSet = new Set(followingList);
-          await setCachedFollowing(currentUserId, followingList);
+          const follows = await Follow.find({ followerId: currentUserId })
+  .select('followingId')
+  .lean();
+
+const followingList = follows
+  .map(f => (f.followingId ? String(f.followingId) : null))
+  .filter(Boolean);
+
+followingSet = new Set(followingList);
+await setCachedFollowing(currentUserId, followingList);
+
         }
       } catch (e) { /* ignore auth parse errors */ }
     }
@@ -792,24 +799,38 @@ app.get('/posts', async (req, res) => {
       likes.forEach(l => likedSet.add(String(l.postId)));
     }
 
-    const results = posts.map(p => {
-      const pid = String(p._id);
-      const postUser = p.username || (p.userId ? String(p.userId) : '');
-      return {
-        id: pid,
-        user: postUser,
-        title: p.title,
-        description: p.description,
-        type: p.type,
-        media: p.media,
-        createdAt: p.createdAt,
-        views: p.views || 0,
-        commentsCount: p.commentsCount || 0,
-        likesCount: p.likesCount || 0,
-        liked: currentUserId ? likedSet.has(pid) : false,
-        isFollowing: postUser ? followingSet.has(postUser) : false
-      };
-    });
+   const results = posts.map(p => {
+  const pid = String(p._id);
+
+  const authorId = p.userId ? String(p.userId) : '';
+  const authorUsername = p.username || '';
+
+  return {
+    id: pid,
+
+    userId: authorId,
+    username: authorUsername,
+    user: authorUsername, // frontend uchun qoldi
+
+    title: p.title,
+    description: p.description,
+    type: p.type,
+    media: p.media,
+    createdAt: p.createdAt,
+
+    views: p.views || 0,
+    commentsCount: p.commentsCount || 0,
+    likesCount: p.likesCount || 0,
+
+    liked: currentUserId ? likedSet.has(pid) : false,
+
+    // ✅ ASOSIY FIX SHU:
+    isFollowing: currentUserId && authorId
+      ? followingSet.has(authorId)
+      : false
+  };
+});
+
 
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
@@ -961,6 +982,13 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
       return res.status(400).json({ msg: 'O‘zingizni follow qila olmaysiz' });
 
     await Follow.create({ followerId, followingId });
+    try {
+  const cached = await getCachedFollowing(followerId);
+  const set = cached ? cached : new Set();
+  set.add(String(followingId));
+  await setCachedFollowing(followerId, Array.from(set));
+} catch {}
+
 
     invalidateUserPostsCache(followerId);
 
@@ -984,6 +1012,14 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
       followerId,
       followingId: targetUser._id
     });
+    try {
+  const cached = await getCachedFollowing(followerId);
+  if (cached) {
+    cached.delete(String(targetUser._id));
+    await setCachedFollowing(followerId, Array.from(cached));
+  }
+} catch {}
+
 
     invalidateUserPostsCache(followerId);
 
