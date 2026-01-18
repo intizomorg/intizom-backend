@@ -1380,15 +1380,19 @@ const io = new Server(server, {
   cors: {
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      const allowed = ALLOWED_ORIGINS.includes(origin);
-      if (allowed) return callback(null, true);
+
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
       console.log("SOCKET CORS BLOCKED:", origin);
-      callback(null, false);
+      return callback(new Error(`Socket CORS blocked for origin: ${origin}`));
     },
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
+
 
 
 (async function attachRedisAdapter() {
