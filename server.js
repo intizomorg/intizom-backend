@@ -752,10 +752,17 @@ app.get('/posts', async (req, res) => {
         const cached = await getCachedFollowing(currentUserId);
         if (cached) followingSet = cached;
         else {
-          const follows = await Follow.find({ $or: [{ followerId: currentUserId }, { follower: currentUsername }] }).select('followingId following');
-          const followingList = follows.map(f => (f.followingId ? String(f.followingId) : (f.following || '')));
-          followingSet = new Set(followingList);
-          await setCachedFollowing(currentUserId, followingList);
+          const follows = await Follow.find({ followerId: currentUserId })
+  .select('followingId')
+  .lean();
+
+const followingIds = follows
+  .map(f => String(f.followingId))
+  .filter(Boolean);
+
+followingSet = new Set(followingIds);
+await setCachedFollowing(currentUserId, followingIds);
+
         }
       } catch (e) { /* ignore auth parse errors */ }
     }
@@ -794,7 +801,8 @@ app.get('/posts', async (req, res) => {
 
     const results = posts.map(p => {
       const pid = String(p._id);
-      const postUser = p.username || (p.userId ? String(p.userId) : '');
+      const authorId = p.userId ? String(p.userId) : '';
+
       return {
         id: pid,
         user: postUser,
@@ -807,7 +815,8 @@ app.get('/posts', async (req, res) => {
         commentsCount: p.commentsCount || 0,
         likesCount: p.likesCount || 0,
         liked: currentUserId ? likedSet.has(pid) : false,
-        isFollowing: postUser ? followingSet.has(postUser) : false
+        isFollowing: authorId ? followingSet.has(authorId) : false
+
       };
     });
 
@@ -963,6 +972,8 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
     await Follow.create({ followerId, followingId });
 
     invalidateUserPostsCache(followerId);
+    invalidateAllPostsCache();
+
 
     res.json({ msg: 'Follow qo‘shildi' });
   } catch (e) {
@@ -986,6 +997,7 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
     });
 
     invalidateUserPostsCache(followerId);
+    invalidateAllPostsCache();
 
     res.json({ msg: 'Unfollow qilindi' });
   } catch (e) {
