@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 
 (async () => {
   try {
-    console.log('Connecting to:', process.env.MONGO_URI);
+    console.log('Connecting to MongoDB...');
+
 await mongoose.connect(process.env.MONGO_URI, {
   maxPoolSize: 10,
   serverSelectionTimeoutMS: 5000,
