@@ -305,7 +305,7 @@ function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
@@ -315,7 +315,7 @@ function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 15 * 60 * 1000
@@ -325,7 +325,7 @@ function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 30 * 24 * 60 * 60 * 1000
@@ -337,7 +337,7 @@ function clearAuthCookies(res) {
   res.cookie('accessToken', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
@@ -345,7 +345,7 @@ function clearAuthCookies(res) {
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/auth/refresh',
     maxAge: 0
@@ -354,7 +354,7 @@ function clearAuthCookies(res) {
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
     maxAge: 0
