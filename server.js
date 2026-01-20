@@ -99,7 +99,6 @@ function enforceAllowedOrigin(req, res, next) {
 }
 app.use(enforceAllowedOrigin);
 app.use(express.json({ limit: '1mb' }));
-
 // -----------------
 // Rate limiting
 // -----------------
