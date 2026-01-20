@@ -1,12 +1,13 @@
 module.exports = function adminIpOnly(req, res, next) {
   const allowed = (process.env.ADMIN_ALLOWED_IPS || "")
     .split(",")
-    .map(ip => ip.trim())
+    .map((ip) => ip.trim())
     .filter(Boolean);
 
   if (!allowed.length) return next();
 
-  const ip = (req.ip || "").replace("::ffff:", "").trim();
+  const raw = req.headers["x-forwarded-for"] || req.ip || "";
+  const ip = String(raw).split(",")[0].replace("::ffff:", "").trim();
 
   if (!allowed.includes(ip)) {
     console.log("ADMIN IP BLOCKED:", ip);

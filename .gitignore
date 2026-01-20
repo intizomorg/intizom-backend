@@ -3,3 +3,9 @@ node_modules
 .env.local
 .env.production
 .vercel
+.env.*
+*.pem
+*.key
+*.p12
+serviceAccount*.json
+id_rsa*
