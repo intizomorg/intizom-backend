@@ -85,7 +85,19 @@ app.use(cors({
   credentials: true
 }));
 
+function enforceAllowedOrigin(req, res, next) {
+  const m = req.method.toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return next();
 
+  const origin = req.headers.origin;
+  if (!origin) return res.status(403).json({ msg: 'Origin required' });
+
+  if (!ALLOWED_ORIGINS.includes(origin)) {
+    return res.status(403).json({ msg: 'Origin not allowed' });
+  }
+  return next();
+}
+app.use(enforceAllowedOrigin);
 app.use(express.json({ limit: '1mb' }));
 
 // -----------------
