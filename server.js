@@ -435,23 +435,50 @@ async function setCachedFollowing(userId, list) {
 // -----------------
 (async function ensureIndexes() {
   try {
+    // ✅ SHUNI QO‘SHING (User search tezlashadi)
+    if (User && User.collection) {
+      await User.collection.createIndex({ username: 1 }, { background: true });
+    }
+
     if (Follow && Follow.collection) {
-      await Follow.collection.createIndex({ followerId: 1, followingId: 1 }, { unique: true, background: true });
+      await Follow.collection.createIndex(
+        { followerId: 1, followingId: 1 },
+        { unique: true, background: true }
+      );
     }
     if (Like && Like.collection) {
-      await Like.collection.createIndex({ postId: 1, userId: 1 }, { unique: true, background: true });
+      await Like.collection.createIndex(
+        { postId: 1, userId: 1 },
+        { unique: true, background: true }
+      );
     }
     if (Message && Message.collection) {
-      await Message.collection.createIndex({ from: 1, to: 1, createdAt: -1 }, { background: true });
+      await Message.collection.createIndex(
+        { from: 1, to: 1, createdAt: -1 },
+        { background: true }
+      );
     }
     if (Comment && Comment.collection) {
-      await Comment.collection.createIndex({ postId: 1, createdAt: -1 }, { background: true });
+      await Comment.collection.createIndex(
+        { postId: 1, createdAt: -1 },
+        { background: true }
+      );
     }
     if (Post && Post.collection) {
-      await Post.collection.createIndex({ status: 1, createdAt: -1 }, { background: true });
-      await Post.collection.createIndex({ likesCount: -1, views: -1 }, { background: true });
-      await Post.collection.createIndex({ userId: 1, createdAt: -1 }, { background: true });
+      await Post.collection.createIndex(
+        { status: 1, createdAt: -1 },
+        { background: true }
+      );
+      await Post.collection.createIndex(
+        { likesCount: -1, views: -1 },
+        { background: true }
+      );
+      await Post.collection.createIndex(
+        { userId: 1, createdAt: -1 },
+        { background: true }
+      );
     }
+
     console.log('Indexes ensured (best-effort)');
   } catch (e) {
     console.warn('Index ensure warning:', e.message || e);
