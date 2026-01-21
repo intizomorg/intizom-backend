@@ -435,22 +435,48 @@ async function setCachedFollowing(userId, list) {
 // -----------------
 (async function ensureIndexes() {
   try {
+    // ✅ SHUNI QO‘SHING (User search tezlashadi)
+    if (User && User.collection) {
+      await User.collection.createIndex({ username: 1 }, { background: true });
+    }
+
     if (Follow && Follow.collection) {
-      await Follow.collection.createIndex({ followerId: 1, followingId: 1 }, { unique: true, background: true });
+      await Follow.collection.createIndex(
+        { followerId: 1, followingId: 1 },
+        { unique: true, background: true }
+      );
     }
     if (Like && Like.collection) {
-      await Like.collection.createIndex({ postId: 1, userId: 1 }, { unique: true, background: true });
+      await Like.collection.createIndex(
+        { postId: 1, userId: 1 },
+        { unique: true, background: true }
+      );
     }
     if (Message && Message.collection) {
-      await Message.collection.createIndex({ from: 1, to: 1, createdAt: -1 }, { background: true });
+      await Message.collection.createIndex(
+        { from: 1, to: 1, createdAt: -1 },
+        { background: true }
+      );
     }
     if (Comment && Comment.collection) {
-      await Comment.collection.createIndex({ postId: 1, createdAt: -1 }, { background: true });
+      await Comment.collection.createIndex(
+        { postId: 1, createdAt: -1 },
+        { background: true }
+      );
     }
     if (Post && Post.collection) {
-      await Post.collection.createIndex({ status: 1, createdAt: -1 }, { background: true });
-      await Post.collection.createIndex({ likesCount: -1, views: -1 }, { background: true });
-      await Post.collection.createIndex({ userId: 1, createdAt: -1 }, { background: true });
+      await Post.collection.createIndex(
+        { status: 1, createdAt: -1 },
+        { background: true }
+      );
+      await Post.collection.createIndex(
+        { likesCount: -1, views: -1 },
+        { background: true }
+      );
+      await Post.collection.createIndex(
+        { userId: 1, createdAt: -1 },
+        { background: true }
+      );
     }
     console.log('Indexes ensured (best-effort)');
   } catch (e) {
@@ -1361,6 +1387,7 @@ app.post('/messages', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
+ msg-delete
 // DELETE message (only sender can delete)
 app.delete('/messages/:id', authMiddleware, async (req, res) => {
   try {
@@ -1382,13 +1409,17 @@ app.delete('/messages/:id', authMiddleware, async (req, res) => {
   }
 });
 
+ main
 app.get('/users/search', authMiddleware, async (req, res) => {
   try {
-    const q = String(req.query.q || '').trim().toLowerCase();
-    if (!q) return res.json([]);
+    const qRaw = String(req.query.q || '').trim();
+    if (!qRaw) return res.json([]);
+
+    // regex injectiondan himoya (MUHIM)
+    const escaped = qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const users = await User.find({
-      username: { $regex: q, $options: 'i' }
+      username: { $regex: `^${escaped}`, $options: 'i' }   // ✅ boshidan boshlab
     })
       .select('username avatar')
       .limit(20)
@@ -1404,6 +1435,7 @@ app.get('/users/search', authMiddleware, async (req, res) => {
     res.status(500).json([]);
   }
 });
+
 
 app.put('/auth/change-password', authMiddleware, async (req, res) => {
   try {
