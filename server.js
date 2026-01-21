@@ -1693,6 +1693,31 @@ app.get('/health', async (req, res) => {
     }
   });
 });
+app.get('/health/db', async (req, res) => {
+  const start = Date.now();
+
+  try {
+    if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
+      return res.status(503).json({
+        db: 'disconnected',
+        dbPingMs: null
+      });
+    }
+
+    await mongoose.connection.db.admin().ping();
+
+    return res.json({
+      db: 'connected',
+      dbPingMs: Date.now() - start
+    });
+  } catch (e) {
+    return res.status(500).json({
+      db: 'error',
+      dbPingMs: null,
+      error: e.message
+    });
+  }
+});
 
 // -----------------
 // Start server
