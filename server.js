@@ -1630,32 +1630,15 @@ app.get('/users/all', authMiddleware, async (req, res) => {
   res.json(users);
 });
 
-app.get('/health', async (req, res) => {
+app.get('/health', (req, res) => {
   const start = Date.now();
   const mem = process.memoryUsage();
-
-  let dbState = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  let dbPingMs = null;
-
-  try {
-    if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
-      const t0 = Date.now();
-      await mongoose.connection.db.admin().ping();
-      dbPingMs = Date.now() - t0;
-    }
-  } catch {
-    dbState = 'disconnected';
-    dbPingMs = null;
-  }
-
-  const responseMs = Date.now() - start;
 
   res.json({
     status: 'ok',
     uptime: process.uptime(),
-    db: dbState,
-    dbPingMs,
-    responseMs,
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    responseMs: Date.now() - start,
     memory: {
       rss: mem.rss,
       heapUsed: mem.heapUsed,
@@ -1668,10 +1651,7 @@ app.get('/health/db', async (req, res) => {
 
   try {
     if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
-      return res.status(503).json({
-        db: 'disconnected',
-        dbPingMs: null
-      });
+      return res.status(503).json({ db: 'disconnected', dbPingMs: null });
     }
 
     await mongoose.connection.db.admin().ping();
