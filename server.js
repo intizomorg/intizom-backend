@@ -1361,6 +1361,26 @@ app.post('/messages', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
+// DELETE message (only sender can delete)
+app.delete('/messages/:id', authMiddleware, async (req, res) => {
+  try {
+    const me = req.user.username;
+    const id = req.params.id;
+
+    // Only allow deleting messages you sent
+    const msg = await Message.findOneAndDelete({ _id: id, from: me });
+
+    if (!msg) {
+      // either not found or not owned by user
+      return res.status(404).json({ msg: "Xabar topilmadi yoki ruxsat yo‘q" });
+    }
+
+    return res.json({ msg: "Xabar o‘chirildi", id: String(id) });
+  } catch (e) {
+    console.error('DELETE /messages/:id ERROR:', e);
+    return res.status(500).json({ msg: "Server xatosi" });
+  }
+});
 
 app.get('/users/search', authMiddleware, async (req, res) => {
   try {
