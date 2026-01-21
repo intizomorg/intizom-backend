@@ -38,7 +38,7 @@ const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
 const app = express();
 const connectDB = require("./config/connectDB");
 if (!global.onlineUsers) global.onlineUsers = new Set();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 app.use(cookieParser());
 
 // -----------------
