@@ -1361,14 +1361,16 @@ app.post('/messages', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
-
 app.get('/users/search', authMiddleware, async (req, res) => {
   try {
-    const q = String(req.query.q || '').trim().toLowerCase();
-    if (!q) return res.json([]);
+    const qRaw = String(req.query.q || '').trim();
+    if (!qRaw) return res.json([]);
+
+    // regex injectiondan himoya (MUHIM)
+    const escaped = qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const users = await User.find({
-      username: { $regex: q, $options: 'i' }
+      username: { $regex: `^${escaped}`, $options: 'i' }   // ✅ boshidan boshlab
     })
       .select('username avatar')
       .limit(20)
@@ -1384,6 +1386,7 @@ app.get('/users/search', authMiddleware, async (req, res) => {
     res.status(500).json([]);
   }
 });
+
 
 app.put('/auth/change-password', authMiddleware, async (req, res) => {
   try {
