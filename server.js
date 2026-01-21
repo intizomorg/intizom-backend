@@ -1387,7 +1387,7 @@ app.post('/messages', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
- msg-delete
+ 
 // DELETE message (only sender can delete)
 app.delete('/messages/:id', authMiddleware, async (req, res) => {
   try {
