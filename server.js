@@ -1630,12 +1630,37 @@ app.get('/users/all', authMiddleware, async (req, res) => {
   res.json(users);
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const start = Date.now();
+  const mem = process.memoryUsage();
+
+  let dbState = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  let dbPingMs = null;
+
+  try {
+    if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+      const t0 = Date.now();
+      await mongoose.connection.db.admin().ping();
+      dbPingMs = Date.now() - t0;
+    }
+  } catch {
+    dbState = 'disconnected';
+    dbPingMs = null;
+  }
+
+  const responseMs = Date.now() - start;
+
   res.json({
     status: 'ok',
     uptime: process.uptime(),
-    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    memory: process.memoryUsage().rss
+    db: dbState,
+    dbPingMs,
+    responseMs,
+    memory: {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal
+    }
   });
 });
 
