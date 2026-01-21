@@ -478,7 +478,6 @@ async function setCachedFollowing(userId, list) {
         { background: true }
       );
     }
-
     console.log('Indexes ensured (best-effort)');
   } catch (e) {
     console.warn('Index ensure warning:', e.message || e);
