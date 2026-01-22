@@ -1286,7 +1286,7 @@ app.put('/profile', authMiddleware, async (req, res) => {
     const website = String(req.body?.website ?? '').slice(0, 200);
     const profession = String(req.body?.profession ?? '').trim().slice(0, 60);
 
-    const user = await User.findById(req.user.id).select('username avatar bio website profession updatedAt');
+    const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ msg: 'User topilmadi' });
 
     user.bio = bio;
@@ -1295,22 +1295,18 @@ app.put('/profile', authMiddleware, async (req, res) => {
 
     await user.save();
 
-    return res.json({
-      msg: 'Profile updated',
-      profile: {
-        username: user.username,
-        avatar: user.avatar || null,
-        bio: user.bio || '',
-        website: user.website || '',
-        profession: user.profession || '',
-        updatedAt: user.updatedAt
-      }
-    });
+    // MUHIM: DB’dan qayta o‘qib, isbot bilan qaytaramiz
+    const fresh = await User.findById(req.user.id)
+      .select('username avatar bio website profession updatedAt')
+      .lean();
+
+    return res.json({ msg: 'Profile updated', profile: fresh });
   } catch (e) {
-    console.error('PROFILE UPDATE ERROR:', e);
-    return res.status(500).json({ msg: 'Server xatosi' });
+    console.error("PROFILE UPDATE ERROR:", e);
+    return res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 // Messages API
 app.get('/chats', authMiddleware, async (req, res) => {
