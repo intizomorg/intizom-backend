@@ -1308,9 +1308,16 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
+    console.log("=== PUT /profile DEBUG ===");
+    console.log("origin:", req.headers.origin);
+    console.log("content-type:", req.headers["content-type"]);
+    console.log("raw body:", req.body);
+
     const bio = String(req.body?.bio || '').slice(0, 300);
     const website = String(req.body?.website || '').slice(0, 200);
     const profession = String(req.body?.profession || '').trim().slice(0, 60);
+
+    console.log("parsed profession:", profession);
 
     const updated = await User.findByIdAndUpdate(
       req.user.id,
@@ -1318,10 +1325,11 @@ app.put('/profile', authMiddleware, async (req, res) => {
       { new: true, runValidators: true, context: 'query' }
     ).select('username avatar bio website profession updatedAt');
 
-    // ✅ QO‘SHING (profil o‘zgarganda feed cache eski qolmasin)
-    invalidateUserPostsCache(req.user.id);
-
-    return res.json({ msg: 'Profile updated', profile: updated });
+    return res.json({
+      msg: 'Profile updated',
+      profile: updated,
+      debug: { received: req.body, parsedProfession: profession } // vaqtincha
+    });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
     return res.status(500).json({ msg: "Server xatosi" });
