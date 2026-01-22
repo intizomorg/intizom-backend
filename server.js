@@ -1215,10 +1215,11 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 
 app.get('/profile/:username', async (req, res) => {
   try {
-const uname = String(req.params.username || '').toLowerCase();
-const u = await User.findOne({ username: uname })
-  .select('username avatar bio website profession updatedAt')
-  .lean();
+    const uname = String(req.params.username || '').toLowerCase();
+    const u = await User.findOne({ username: uname })
+      .select('username avatar bio website profession updatedAt') // updatedAt bor
+      .lean();
+
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
     const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
@@ -1226,21 +1227,22 @@ const u = await User.findOne({ username: uname })
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
-  username: u.username,
-  avatar: u.avatar || null,
-  bio: u.bio || '',
-  website: u.website || '',
-  profession: u.profession || '',
-  posts: postsCount,
-  followers,
-  following
-});
-
+      username: u.username,
+      avatar: u.avatar || null,
+      bio: u.bio || '',
+      website: u.website || '',
+      profession: u.profession || '',
+      updatedAt: u.updatedAt,              // ✅ QO‘SHING
+      posts: postsCount,
+      followers,
+      following
+    });
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 app.get('/posts/user/:username', async (req, res) => {
   try {
@@ -1316,12 +1318,16 @@ app.put('/profile', authMiddleware, async (req, res) => {
       { new: true, runValidators: true, context: 'query' }
     ).select('username avatar bio website profession updatedAt');
 
+    // ✅ QO‘SHING (profil o‘zgarganda feed cache eski qolmasin)
+    invalidateUserPostsCache(req.user.id);
+
     return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
     return res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 
 
