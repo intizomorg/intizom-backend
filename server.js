@@ -1291,16 +1291,30 @@ app.put('/profile', authMiddleware, async (req, res) => {
     const website = String(req.body?.website || '').slice(0, 200);
     const profession = String(req.body?.profession || '').trim().slice(0, 60);
 
-    const updated = await User.findByIdAndUpdate(
-      req.user.id,
-      { $set: { bio, website, profession } },
-      { new: true, runValidators: true, context: 'query' }
-    ).select('username avatar bio website profession updatedAt');
+    const user = await User.findById(req.user.id).select('username avatar bio website profession updatedAt');
+    if (!user) return res.status(404).json({ msg: 'User not found' });
 
-    return res.json({ msg: 'Profile updated', profile: updated });
+    user.bio = bio;
+    user.website = website;
+    user.profession = profession;
+
+    await user.save();
+
+    return res.json({
+      msg: 'Profile updated',
+      profile: {
+        username: user.username,
+        avatar: user.avatar || null,
+        bio: user.bio || '',
+        website: user.website || '',
+        profession: user.profession || '',     // ✅ MUHIM
+        updatedAt: user.updatedAt,
+        id: String(user._id),
+      }
+    });
   } catch (e) {
-    console.error("PROFILE UPDATE ERROR:", e);
-    return res.status(500).json({ msg: "Server xatosi" });
+    console.error('PROFILE UPDATE ERROR:', e);
+    return res.status(500).json({ msg: 'Server xatosi' });
   }
 });
 
