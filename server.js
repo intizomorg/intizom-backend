@@ -1720,6 +1720,34 @@ app.get('/debug/profile', authMiddleware, (req, res) => {
     origin: req.headers.origin || null,
   });
 });
+app.get('/debug/db', authMiddleware, async (req, res) => {
+  try {
+    const u = await User.findById(req.user.id).select('username profession bio updatedAt').lean();
+
+    return res.json({
+      ok: true,
+      service: process.env.RENDER_SERVICE_NAME || null,
+      commit: process.env.RENDER_GIT_COMMIT || null,
+      db: {
+        host: mongoose.connection?.host || null,
+        name: mongoose.connection?.name || null,
+        readyState: mongoose.connection?.readyState || null,
+      },
+      me: {
+        id: req.user.id,
+        username: req.user.username,
+      },
+      inDb: {
+        username: u?.username || null,
+        profession: u?.profession ?? null,
+        bio: u?.bio ?? null,
+        updatedAt: u?.updatedAt ?? null,
+      }
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // -----------------
 // Start server
