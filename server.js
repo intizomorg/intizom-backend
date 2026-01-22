@@ -1719,6 +1719,13 @@ app.get('/health/db', async (req, res) => {
     });
   }
 });
+app.get('/debug/profile', authMiddleware, (req, res) => {
+  return res.json({
+    ok: true,
+    user: req.user,
+    origin: req.headers.origin || null,
+  });
+});
 
 // -----------------
 // Start server
