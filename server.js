@@ -1282,34 +1282,35 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
-    console.log("=== PUT /profile DEBUG ===");
-    console.log("origin:", req.headers.origin);
-    console.log("content-type:", req.headers["content-type"]);
-    console.log("raw body:", req.body);
-
     const bio = String(req.body?.bio || '').slice(0, 300);
     const website = String(req.body?.website || '').slice(0, 200);
     const profession = String(req.body?.profession || '').trim().slice(0, 60);
 
-    console.log("parsed profession:", profession);
-
-    const updated = await User.findByIdAndUpdate(
-      req.user.id,
+    // 1) UPDATE
+    await User.updateOne(
+      { _id: req.user.id },
       { $set: { bio, website, profession } },
-      { new: true, runValidators: true, context: 'query' }
-    ).select('username avatar bio website profession updatedAt');
+      { runValidators: true }
+    );
+
+    // 2) IMMEDIATELY READ BACK (DB’dan qayta o‘qib olamiz)
+    const fresh = await User.findById(req.user.id)
+      .select('username bio website profession updatedAt')
+      .lean();
 
     return res.json({
       msg: 'Profile updated',
-      profile: updated,
-      debug: { received: req.body, parsedProfession: profession } // vaqtincha
+      profile: fresh,
+      debugDb: {
+        dbName: mongoose.connection?.name || null,
+        host: mongoose.connection?.host || null
+      }
     });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
     return res.status(500).json({ msg: "Server xatosi" });
   }
 });
-
 
 
 
