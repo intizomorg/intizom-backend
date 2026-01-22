@@ -843,6 +843,7 @@ await setCachedFollowing(currentUserId, followingList);
 });
 
 
+
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
     res.json(response);
@@ -1189,11 +1190,10 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 
 app.get('/profile/:username', async (req, res) => {
   try {
-    const uname = String(req.params.username || '').toLowerCase();
-    const u = await User.findOne({ username: uname })
-      .select('username avatar bio website profession updatedAt') // updatedAt bor
-      .lean();
-
+const uname = String(req.params.username || '').toLowerCase();
+const u = await User.findOne({ username: uname })
+  .select('username avatar bio website updatedAt')
+  .lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
     const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
@@ -1201,22 +1201,20 @@ app.get('/profile/:username', async (req, res) => {
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
-      username: u.username,
-      avatar: u.avatar || null,
-      bio: u.bio || '',
-      website: u.website || '',
-      profession: u.profession || '',
-      updatedAt: u.updatedAt,              // ✅ QO‘SHING
-      posts: postsCount,
-      followers,
-      following
-    });
+  username: u.username,
+  avatar: u.avatar || null,
+  bio: u.bio || '',
+  website: u.website || '',
+  posts: postsCount,
+  followers,
+  following
+});
+
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 
 app.get('/posts/user/:username', async (req, res) => {
   try {
@@ -1282,30 +1280,23 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const bio = String(req.body?.bio ?? '').slice(0, 300);
-    const website = String(req.body?.website ?? '').slice(0, 200);
-    const profession = String(req.body?.profession ?? '').trim().slice(0, 60);
+    const bio = String(req.body?.bio || '').slice(0, 300);
+    const website = String(req.body?.website || '').slice(0, 200);
 
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ msg: 'User topilmadi' });
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: { bio, website } },
+      { new: true, runValidators: true, context: 'query' }
+    ).select('username avatar bio website updatedAt');
 
-    user.bio = bio;
-    user.website = website;
-    user.profession = profession;
-
-    await user.save();
-
-    // MUHIM: DB’dan qayta o‘qib, isbot bilan qaytaramiz
-    const fresh = await User.findById(req.user.id)
-      .select('username avatar bio website profession updatedAt')
-      .lean();
-
-    return res.json({ msg: 'Profile updated', profile: fresh });
+    return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
     return res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
+
 
 
 // Messages API
@@ -1681,41 +1672,6 @@ app.get('/health/db', async (req, res) => {
       dbPingMs: null,
       error: e.message
     });
-  }
-});
-app.get('/debug/profile', authMiddleware, (req, res) => {
-  return res.json({
-    ok: true,
-    user: req.user,
-    origin: req.headers.origin || null,
-  });
-});
-app.get('/debug/db', authMiddleware, async (req, res) => {
-  try {
-    const u = await User.findById(req.user.id).select('username profession bio updatedAt').lean();
-
-    return res.json({
-      ok: true,
-      service: process.env.RENDER_SERVICE_NAME || null,
-      commit: process.env.RENDER_GIT_COMMIT || null,
-      db: {
-        host: mongoose.connection?.host || null,
-        name: mongoose.connection?.name || null,
-        readyState: mongoose.connection?.readyState || null,
-      },
-      me: {
-        id: req.user.id,
-        username: req.user.username,
-      },
-      inDb: {
-        username: u?.username || null,
-        profession: u?.profession ?? null,
-        bio: u?.bio ?? null,
-        updatedAt: u?.updatedAt ?? null,
-      }
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
