@@ -1189,32 +1189,39 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 
 app.get('/profile/:username', async (req, res) => {
   try {
-const uname = String(req.params.username || '').toLowerCase();
-const u = await User.findOne({ username: uname })
-  .select('username avatar bio website profession updatedAt')
-  .lean();
+    // ✅ CACHE NI O‘CHIRISH (profil tez-tez o‘zgaradi)
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
+    const uname = String(req.params.username || '').toLowerCase();
+    const u = await User.findOne({ username: uname })
+      .select('username avatar bio website profession updatedAt')
+      .lean();
+
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
     const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
     const followers = await Follow.countDocuments({ followingId: u._id });
     const following = await Follow.countDocuments({ followerId: u._id });
 
-    res.json({
-  username: u.username,
-  avatar: u.avatar || null,
-  bio: u.bio || '',
-  website: u.website || '',
-  profession: u.profession || '',
-  posts: postsCount,
-  followers,
-  following
-});
-
+    return res.json({
+      username: u.username,
+      avatar: u.avatar || null,
+      bio: u.bio || '',
+      website: u.website || '',
+      profession: u.profession || '',
+      posts: postsCount,
+      followers,
+      following
+    });
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+    return res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 app.get('/posts/user/:username', async (req, res) => {
   try {
