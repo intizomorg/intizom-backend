@@ -1338,10 +1338,6 @@ app.put('/profile', authMiddleware, async (req, res) => {
   }
 });
 
-
-
-
-
 // Messages API
 app.get('/chats', authMiddleware, async (req, res) => {
   try {
