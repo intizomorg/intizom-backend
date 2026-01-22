@@ -1282,7 +1282,7 @@ app.put('/profile', authMiddleware, async (req, res) => {
   try {
     const bio = String(req.body?.bio || '').slice(0, 300);
     const website = String(req.body?.website || '').slice(0, 200);
-    const profession = String(req.body?.profession || '').slice(0, 60);
+    const profession = String(req.body?.profession || '').trim().slice(0, 60);
 
     const updated = await User.findByIdAndUpdate(
       req.user.id,
@@ -1290,7 +1290,7 @@ app.put('/profile', authMiddleware, async (req, res) => {
       { new: true, runValidators: true, context: 'query' }
     ).select('username avatar bio website profession updatedAt');
 
-    return res.json({ msg: "Profile updated", profile: updated });
+    return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
     return res.status(500).json({ msg: "Server xatosi" });
