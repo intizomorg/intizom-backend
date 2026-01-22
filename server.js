@@ -1726,7 +1726,17 @@ app.get('/health/db', async (req, res) => {
     });
   }
 });
-
+app.get("/debug/user-schema", (req, res) => {
+  try {
+    const User = require("./models/User");
+    return res.json({
+      ok: true,
+      schemaPaths: Object.keys(User.schema.paths).sort(),
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 // -----------------
 // Start server
 // -----------------
