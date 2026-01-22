@@ -1223,14 +1223,16 @@ app.get('/profile/:username', async (req, res) => {
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
-      username: u.username,
-      avatar: u.avatar || null,
-      bio: u.bio || '',
-      website: u.website || '',
-      posts: postsCount,
-      followers,
-      following
-    });
+  username: u.username,
+  avatar: u.avatar || null,
+  bio: u.bio || '',
+  website: u.website || '',
+  profession: u.profession || '',
+  posts: postsCount,
+  followers,
+  following
+});
+
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
@@ -1301,13 +1303,15 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const { bio = "", website = "" } = req.body;
+const { bio = "", website = "", profession = "" } = req.body;
 
     await User.findByIdAndUpdate(req.user.id, {
       $set: {
-        bio: String(bio).slice(0, 160),
-        website: String(website).slice(0, 200)
-      }
+  bio: String(bio).slice(0, 160),
+  website: String(website).slice(0, 200),
+  profession: String(profession).slice(0, 60),
+}
+
     });
 
     invalidateUserPostsCache(req.user.id);
