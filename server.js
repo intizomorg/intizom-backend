@@ -1188,6 +1188,9 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 });
 
 app.get('/profile/:username', async (req, res) => {
+  // ✅ CACHE NI O‘CHIRISH (refresh/ boshqa userda eski data chiqmasligi uchun)
+  res.setHeader('Cache-Control', 'no-store');
+
   try {
     const u = await User.findOne({ username: req.params.username }).lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
@@ -1197,21 +1200,22 @@ app.get('/profile/:username', async (req, res) => {
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
-  username: u.username,
-  avatar: u.avatar || null,
-  bio: u.bio || '',
-  website: u.website || '',
-  profession: u.profession || '',
-  posts: postsCount,
-  followers,
-  following
-});
-
+      username: u.username,
+      avatar: u.avatar || null,
+      bio: u.bio || '',
+      website: u.website || '',
+      profession: u.profession || '',
+      updatedAt: u.updatedAt, // ✅ (frontend uchun ham foydali)
+      posts: postsCount,
+      followers,
+      following
+    });
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 app.get('/posts/user/:username', async (req, res) => {
   try {
@@ -1276,6 +1280,9 @@ app.get('/profile/:username/following', async (req, res) => {
 });
 
 app.put('/profile', authMiddleware, async (req, res) => {
+  // ✅ CACHE NI O‘CHIRISH
+  res.setHeader('Cache-Control', 'no-store');
+
   try {
     const { bio = "", website = "", profession = "" } = req.body;
 
@@ -1288,8 +1295,8 @@ app.put('/profile', authMiddleware, async (req, res) => {
           profession: String(profession).slice(0, 60),
         },
       },
-      { new: true }
-    ).select("username avatar bio website profession");
+      { new: true, runValidators: true } // ✅
+    ).select("username avatar bio website profession updatedAt");
 
     res.json({ msg: "Profile updated", profile: updated });
   } catch (e) {
@@ -1297,6 +1304,7 @@ app.put('/profile', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 
 // Messages API
