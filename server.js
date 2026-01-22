@@ -1303,25 +1303,27 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
-const { bio = "", website = "", profession = "" } = req.body;
+    const { bio = "", website = "", profession = "" } = req.body;
 
-    await User.findByIdAndUpdate(req.user.id, {
-      $set: {
-  bio: String(bio).slice(0, 160),
-  website: String(website).slice(0, 200),
-  profession: String(profession).slice(0, 60),
-}
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        $set: {
+          bio: String(bio).slice(0, 300),
+          website: String(website).slice(0, 200),
+          profession: String(profession).slice(0, 60),
+        },
+      },
+      { new: true }
+    ).select("username avatar bio website profession");
 
-    });
-
-    invalidateUserPostsCache(req.user.id);
-
-    res.json({ msg: 'Profile updated' });
+    res.json({ msg: "Profile updated", profile: updated });
   } catch (e) {
-    console.error('PROFILE UPDATE ERROR:', e);
-    res.status(500).json({ msg: 'Server xatosi' });
+    console.error("PROFILE UPDATE ERROR:", e);
+    res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 // Messages API
 app.get('/chats', authMiddleware, async (req, res) => {
