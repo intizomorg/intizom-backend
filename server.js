@@ -1189,7 +1189,10 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 
 app.get('/profile/:username', async (req, res) => {
   try {
-    const u = await User.findOne({ username: req.params.username }).lean();
+const uname = String(req.params.username || '').toLowerCase();
+const u = await User.findOne({ username: uname })
+  .select('username avatar bio website profession updatedAt')
+  .lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
     const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
@@ -1277,26 +1280,24 @@ app.get('/profile/:username/following', async (req, res) => {
 
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const { bio = "", website = "", profession = "" } = req.body;
+    const bio = String(req.body?.bio || '').slice(0, 300);
+    const website = String(req.body?.website || '').slice(0, 200);
+    const profession = String(req.body?.profession || '').slice(0, 60);
 
     const updated = await User.findByIdAndUpdate(
       req.user.id,
-      {
-        $set: {
-          bio: String(bio).slice(0, 300),
-          website: String(website).slice(0, 200),
-          profession: String(profession).slice(0, 60),
-        },
-      },
-      { new: true }
-    ).select("username avatar bio website profession");
+      { $set: { bio, website, profession } },
+      { new: true, runValidators: true, context: 'query' }
+    ).select('username avatar bio website profession updatedAt');
 
-    res.json({ msg: "Profile updated", profile: updated });
+    return res.json({ msg: "Profile updated", profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
-    res.status(500).json({ msg: "Server xatosi" });
+    return res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
+
 
 
 // Messages API
