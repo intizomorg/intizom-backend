@@ -30,7 +30,7 @@ const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
 const cookieParser = require("cookie-parser");
-
+const Notification = require('./models/Notification');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
 const adminLoginLimiter = require('./middlewares/adminLoginLimiter');
@@ -983,6 +983,56 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
+app.get("/notifications", authMiddleware, async (req, res) => {
+  try {
+    const me = req.user.id;
+
+    const notifs = await Notification.find({ userId: me, type: "follow" })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .populate("actorId", "username avatar")
+      .lean();
+
+    const actorIds = notifs
+      .map(n => n.actorId?._id)
+      .filter(Boolean);
+
+    // Men ularni follow qilib qo‘yganmanmi? (follow-back holati)
+    const follows = actorIds.length
+      ? await Follow.find({
+          followerId: me,
+          followingId: { $in: actorIds }
+        }).select("followingId").lean()
+      : [];
+
+    const followingBackSet = new Set(follows.map(f => String(f.followingId)));
+
+    const result = notifs.map(n => ({
+      id: String(n._id),
+      type: n.type,
+      createdAt: n.createdAt,
+      read: !!n.read,
+
+      actor: n.actorId
+        ? {
+            id: String(n.actorId._id),
+            username: n.actorId.username,
+            avatar: n.actorId.avatar || null
+          }
+        : null,
+
+      // UI tugma uchun:
+      isFollowingBack: n.actorId?._id
+        ? followingBackSet.has(String(n.actorId._id))
+        : false
+    }));
+
+    res.json({ notifications: result });
+  } catch (e) {
+    console.error("GET /notifications ERROR:", e);
+    res.status(500).json({ msg: "Server xatosi" });
+  }
+});
 
 app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
   try {
@@ -1006,6 +1056,7 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
 });
 
 // Follow / Unfollow
+// Follow / Unfollow
 app.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
@@ -1019,14 +1070,28 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
     if (String(followerId) === String(followingId))
       return res.status(400).json({ msg: 'O‘zingizni follow qila olmaysiz' });
 
+    // CREATE FOLLOW
     await Follow.create({ followerId, followingId });
-    try {
-  const cached = await getCachedFollowing(followerId);
-  const set = cached ? cached : new Set();
-  set.add(String(followingId));
-  await setCachedFollowing(followerId, Array.from(set));
-} catch {}
 
+    // <-- NOTIFY: add here
+    try {
+      await Notification.create({
+        userId: followingId,   // notification recipient
+        type: "follow",
+        actorId: followerId
+      });
+    } catch (e) {
+      // duplicate yoki boshqa xatolar bo‘lsa ham follow ishlashi kerak
+      console.warn("Notification create failed:", e.message || e);
+    }
+    // end NOTIFY
+
+    try {
+      const cached = await getCachedFollowing(followerId);
+      const set = cached ? cached : new Set();
+      set.add(String(followingId));
+      await setCachedFollowing(followerId, Array.from(set));
+    } catch {}
 
     invalidateUserPostsCache(followerId);
 
@@ -1037,6 +1102,7 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 app.post('/unfollow/:username', authMiddleware, async (req, res) => {
   try {
