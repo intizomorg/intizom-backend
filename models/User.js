@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const SALT_ROUNDS = 10;
 // ✅ Profession variantlari
 const PROFESSION_ENUM = [
-  "",               // ✅ bo‘sh holatga ruxsat (Tanlang...)
+  "", // bo‘sh holat (Tanlang...)
   "Developer",
   "Designer",
   "SMM",
@@ -15,9 +15,11 @@ const PROFESSION_ENUM = [
   "Engineer",
   "Student",
   "Entrepreneur",
-  "Lawyer",         // ✅ frontend’da bor edi
-  "Other"
+  "Lawyer",
+  "qizlarni ajali",
+  "Other",
 ];
+
 
 const UserSchema = new mongoose.Schema(
   {
