@@ -1395,7 +1395,6 @@ app.put('/profile', authMiddleware, async (req, res) => {
 
 
 
-
 // Messages API
 app.get('/chats', authMiddleware, async (req, res) => {
   try {
@@ -1424,6 +1423,14 @@ app.get('/chats', authMiddleware, async (req, res) => {
           username: { $first: "$other" },
           lastMessage: { $first: "$text" },
           createdAt: { $first: "$createdAt" },
+
+          // yangi maydonlar — oxirgi incoming xabar va oxirgi incoming xabarni o'qilgani vaqti
+          lastIncomingAt: {
+            $max: { $cond: [{ $eq: ["$to", me] }, "$createdAt", null] }
+          },
+          lastIncomingReadAt: {
+            $max: { $cond: [{ $eq: ["$to", me] }, "$readAt", null] }
+          },
 
           unreadCount: {
             $sum: {
@@ -1706,7 +1713,7 @@ io.on('connection', socket => {
     } catch (e) { console.error('SOCKET PRIVATE_MESSAGE ERROR:', e); }
   });
 
-  // === mark_seen handler (qo'shildi) ===
+  // === mark_seen handler (qo'shildi, authoritative payload) ===
   socket.on('mark_seen', async (data) => {
     try {
       const other = String(data?.with || '').trim();
@@ -1721,19 +1728,31 @@ io.on('connection', socket => {
         { $set: { readAt: now } }
       );
 
-      // ✅ boshqa tomonga (senderga) real-time “seen” yuboramiz
+      // oxirgi incoming message'ni authoritative ravishda olib olamiz
+      const lastIncoming = await Message.findOne({ from: other, to: me })
+        .sort({ createdAt: -1 })
+        .select('_id createdAt readAt')
+        .lean();
+
+      const count = result?.modifiedCount || result?.nModified || 0;
+
+      // ✅ boshqa tomonga (senderga) real-time “seen” yuboramiz (authoritative payload)
       io.to(other).emit('seen', {
         by: me,        // kim o'qidi
         with: other,   // kim bilan chat
         at: now,
-        count: result?.modifiedCount || result?.nModified || 0
+        count,
+        lastReadAt: now,
+        lastReadMessageId: lastIncoming?._id ? String(lastIncoming._id) : null
       });
 
       // (ixtiyoriy) o'zimga ham ack qaytarish:
       socket.emit('seen_ack', {
         with: other,
         at: now,
-        count: result?.modifiedCount || result?.nModified || 0
+        count,
+        lastReadAt: now,
+        lastReadMessageId: lastIncoming?._id ? String(lastIncoming._id) : null
       });
     } catch (e) {
       console.error("SOCKET mark_seen ERROR:", e);
