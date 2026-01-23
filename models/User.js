@@ -2,7 +2,24 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
-const SALT_ROUNDS = 10; // adjust to 12+ in stronger production environments if CPU allows
+const SALT_ROUNDS = 10;
+
+// ✅ Profession variantlari
+const PROFESSION_ENUM = [
+  "",               // ✅ bo‘sh holatga ruxsat (Tanlang...)
+  "Developer",
+  "Designer",
+  "SMM",
+  "Photographer",
+  "Videographer",
+  "Teacher",
+  "Doctor",
+  "Engineer",
+  "Student",
+  "Entrepreneur",
+  "Lawyer",         // ✅ frontend’da bor edi
+  "Other"
+];
 
 const UserSchema = new mongoose.Schema(
   {
@@ -21,7 +38,6 @@ const UserSchema = new mongoose.Schema(
       ]
     },
 
-    // password is never returned in queries by default
     password: {
       type: String,
       required: true,
@@ -29,16 +45,9 @@ const UserSchema = new mongoose.Schema(
       minlength: 8
     },
 
-    avatar: {
-      type: String,
-      default: null
-    },
+    avatar: { type: String, default: null },
 
-    bio: {
-      type: String,
-      default: "",
-      maxlength: 300
-    },
+    bio: { type: String, default: "", maxlength: 300 },
 
     website: {
       type: String,
@@ -47,9 +56,16 @@ const UserSchema = new mongoose.Schema(
       set: (v) => {
         if (!v) return "";
         const val = v.trim();
+        if (!val) return "";
         if (!/^https?:\/\//i.test(val)) return "https://" + val;
         return val;
       }
+    },
+
+    profession: {
+      type: String,
+      enum: PROFESSION_ENUM,
+      default: "" // ✅ endi enum ichida bor
     },
 
     role: {
@@ -58,7 +74,6 @@ const UserSchema = new mongoose.Schema(
       default: "user"
     },
 
-    // ✅ QO‘SHILDI: token versioning (JWT invalidation uchun)
     tokenVersion: {
       type: Number,
       default: 0,
@@ -68,12 +83,6 @@ const UserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-/**
- * toJSON / toObject transform:
- * - remove internal fields (password is already select:false, but remove defensively)
- * - convert _id to id
- * - remove __v
- */
 function transform(doc, ret) {
   ret.id = ret._id?.toString();
   delete ret._id;
@@ -87,16 +96,10 @@ UserSchema.set("toObject", { virtuals: true, transform });
 
 UserSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
-  const hash = await bcrypt.hash(this.password, SALT_ROUNDS);
-  this.password = hash;
+  this.password = await bcrypt.hash(this.password, SALT_ROUNDS);
 });
 
-/**
- * Instance method to compare password.
- * Note: when querying user for authentication, include password with `.select('+password')`.
- */
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
-
 module.exports = mongoose.model("User", UserSchema);
