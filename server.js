@@ -1401,24 +1401,48 @@ app.get('/chats', authMiddleware, async (req, res) => {
   try {
     const me = req.user.username;
 
-    const sent = await Message.find({ from: me }).select('to text createdAt').lean();
-    const received = await Message.find({ to: me }).select('from text createdAt').lean();
+    const chats = await Message.aggregate([
+      {
+        $match: {
+          $or: [{ from: me }, { to: me }]
+        }
+      },
+      {
+        $addFields: {
+          other: {
+            $cond: [{ $eq: ["$from", me] }, "$to", "$from"]
+          },
+          isIncoming: {
+            $cond: [{ $eq: ["$to", me] }, true, false]
+          }
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$other",
+          username: { $first: "$other" },
+          lastMessage: { $first: "$text" },
+          createdAt: { $first: "$createdAt" },
 
-    const map = {};
-
-    sent.forEach(m => {
-      if (!map[m.to] || map[m.to].createdAt < m.createdAt) {
-        map[m.to] = { username: m.to, lastMessage: m.text, createdAt: m.createdAt };
-      }
-    });
-
-    received.forEach(m => {
-      if (!map[m.from] || map[m.from].createdAt < m.createdAt) {
-        map[m.from] = { username: m.from, lastMessage: m.text, createdAt: m.createdAt };
-      }
-    });
-
-    const chats = Object.values(map).sort((a, b) => b.createdAt - a.createdAt);
+          unreadCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$to", me] },
+                    { $eq: ["$readAt", null] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ]);
 
     res.json(chats);
   } catch (e) {
@@ -1426,6 +1450,7 @@ app.get('/chats', authMiddleware, async (req, res) => {
     res.status(500).json([]);
   }
 });
+
 
 app.get('/messages/:username', authMiddleware, async (req, res) => {
   try {
@@ -1680,6 +1705,42 @@ io.on('connection', socket => {
       io.to(username).emit('private_message', msg);
     } catch (e) { console.error('SOCKET PRIVATE_MESSAGE ERROR:', e); }
   });
+
+  // === mark_seen handler (qo'shildi) ===
+  socket.on('mark_seen', async (data) => {
+    try {
+      const other = String(data?.with || '').trim();
+      if (!other) return;
+
+      const me = username; // socket.user.username
+      const now = new Date();
+
+      // Men o'sha user'dan olgan va hali o'qilmagan xabarlarni read qilamiz
+      const result = await Message.updateMany(
+        { from: other, to: me, readAt: null },
+        { $set: { readAt: now } }
+      );
+
+      // ✅ boshqa tomonga (senderga) real-time “seen” yuboramiz
+      io.to(other).emit('seen', {
+        by: me,        // kim o'qidi
+        with: other,   // kim bilan chat
+        at: now,
+        count: result?.modifiedCount || result?.nModified || 0
+      });
+
+      // (ixtiyoriy) o'zimga ham ack qaytarish:
+      socket.emit('seen_ack', {
+        with: other,
+        at: now,
+        count: result?.modifiedCount || result?.nModified || 0
+      });
+    } catch (e) {
+      console.error("SOCKET mark_seen ERROR:", e);
+    }
+  });
+  // === end mark_seen ===
+
 });
 
 // -----------------
