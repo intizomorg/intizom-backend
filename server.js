@@ -868,8 +868,6 @@ await setCachedFollowing(currentUserId, followingList);
   };
 });
 
-
-
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
     res.json(response);
@@ -980,7 +978,7 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
     res.json({ likesCount: post.likesCount });
   } catch (e) {
     console.error("UNLIKE ERROR:", e);
-    res.status(500).json({ msg: "Server xatosi" });
+    res.status(500).json({ msg: 'Server xatosi' });
   }
 });
 app.get("/notifications", authMiddleware, async (req, res) => {
@@ -1284,7 +1282,7 @@ app.get('/profile/:username', async (req, res) => {
   try {
 const uname = String(req.params.username || '').toLowerCase();
 const u = await User.findOne({ username: uname })
-  .select('username avatar bio website profession updatedAt')
+  .select('username avatar bio website profession lastSeenAt updatedAt')
 
   .lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
@@ -1301,9 +1299,9 @@ const u = await User.findOne({ username: uname })
   profession: u.profession || '',
   posts: postsCount,
   followers,
-  following
+  following,
+  lastSeenAt: u.lastSeenAt || null
 });
-
 
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
@@ -1391,7 +1389,6 @@ app.put('/profile', authMiddleware, async (req, res) => {
     return res.status(500).json({ msg: "Server xatosi" });
   }
 });
-
 
 
 
@@ -1687,6 +1684,16 @@ io.on('connection', socket => {
   socket.on('disconnect', async () => {
     onlineCount--;
     try {
+      // update lastSeenAt for this username
+      try {
+        await User.updateOne(
+          { username },
+          { $set: { lastSeenAt: new Date() } }
+        );
+      } catch (e) {
+        console.warn("lastSeenAt update failed:", e.message || e);
+      }
+
       if (redisAvailable && redisClient) {
         await redisClient.srem('online_users', username);
         const members = await redisClient.smembers('online_users');
@@ -1701,6 +1708,11 @@ io.on('connection', socket => {
   socket.on('typing', (data) => {
     const { to } = data || {};
     if (to) io.to(to).emit('typing', { from: username });
+  });
+
+  socket.on('stop_typing', (data) => {
+    const { to } = data || {};
+    if (to) io.to(to).emit('stop_typing', { from: username });
   });
 
   socket.on('private_message', async (data) => {
