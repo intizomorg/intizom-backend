@@ -1306,7 +1306,6 @@ app.get('/profile/:username/following', async (req, res) => {
     res.status(500).json([]);
   }
 });
-
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
     const bio = String(req.body?.bio || '').slice(0, 300);
@@ -1320,7 +1319,6 @@ app.put('/profile', authMiddleware, async (req, res) => {
       { $set: { bio, website, profession } },
       { new: true, runValidators: true, context: 'query' }
     ).select('username avatar bio website profession updatedAt');
-
     return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);

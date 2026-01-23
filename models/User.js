@@ -1,9 +1,7 @@
 // models/User.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-
 const SALT_ROUNDS = 10;
-
 // ✅ Profession variantlari
 const PROFESSION_ENUM = [
   "",               // ✅ bo‘sh holatga ruxsat (Tanlang...)
