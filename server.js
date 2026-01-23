@@ -278,7 +278,7 @@ function signAccessToken(user) {
       tv: user.tokenVersion || 0
     },
     JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '30m' }
   );
 }
 
@@ -318,7 +318,7 @@ function setAuthCookies(res, accessToken, refreshToken) {
     sameSite: 'lax',
     domain: process.env.COOKIE_DOMAIN || '.intizom.org',
     path: '/',
-    maxAge: 15 * 60 * 1000
+    maxAge: 30 * 60 * 1000
   });
 
   // set refreshToken (scoped to refresh endpoint)
