@@ -2,6 +2,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const SALT_ROUNDS = 10;
+
 // ✅ Profession variantlari
 const PROFESSION_ENUM = [
   "", // bo‘sh holat (Tanlang...)
@@ -19,7 +20,6 @@ const PROFESSION_ENUM = [
   "qizlarni ajali",
   "Other",
 ];
-
 
 const UserSchema = new mongoose.Schema(
   {
@@ -49,6 +49,13 @@ const UserSchema = new mongoose.Schema(
 
     bio: { type: String, default: "", maxlength: 300 },
 
+    // ✅ 4.1 — lastSeenAt qo‘shildi
+    lastSeenAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
+
     website: {
       type: String,
       default: "",
@@ -65,7 +72,7 @@ const UserSchema = new mongoose.Schema(
     profession: {
       type: String,
       enum: PROFESSION_ENUM,
-      default: "" // ✅ endi enum ichida bor
+      default: ""
     },
 
     role: {
@@ -98,7 +105,9 @@ UserSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
   this.password = await bcrypt.hash(this.password, SALT_ROUNDS);
 });
+
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
+
 module.exports = mongoose.model("User", UserSchema);
