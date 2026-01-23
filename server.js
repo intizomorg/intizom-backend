@@ -1218,7 +1218,8 @@ app.get('/profile/:username', async (req, res) => {
   try {
 const uname = String(req.params.username || '').toLowerCase();
 const u = await User.findOne({ username: uname })
-  .select('username avatar bio website updatedAt')
+  .select('username avatar bio website profession updatedAt')
+
   .lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
@@ -1231,10 +1232,12 @@ const u = await User.findOne({ username: uname })
   avatar: u.avatar || null,
   bio: u.bio || '',
   website: u.website || '',
+  profession: u.profession || '',
   posts: postsCount,
   followers,
   following
 });
+
 
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
@@ -1308,13 +1311,12 @@ app.put('/profile', authMiddleware, async (req, res) => {
   try {
     const bio = String(req.body?.bio || '').slice(0, 300);
     const website = String(req.body?.website || '').slice(0, 200);
-
+    
     const updated = await User.findByIdAndUpdate(
       req.user.id,
-      { $set: { bio, website } },
+      { $set: { bio, website, profession } },
       { new: true, runValidators: true, context: 'query' }
-    ).select('username avatar bio website updatedAt');
-
+    ).select('username avatar bio website profession updatedAt');
     return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
