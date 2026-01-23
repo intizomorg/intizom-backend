@@ -30,6 +30,7 @@ const mime = require('mime-types');
 const FileType = require('file-type');
 const mongoose = require('mongoose');
 const cookieParser = require("cookie-parser");
+const sanitizeHtml = require("sanitize-html"); // ✅ added
 const Notification = require('./models/Notification');
 const adminDomainOnly = require('./middlewares/adminDomainOnly');
 const adminIpOnly = require('./middlewares/adminIpOnly');
@@ -790,15 +791,15 @@ app.get('/posts', async (req, res) => {
         if (cached) followingSet = cached;
         else {
           const follows = await Follow.find({ followerId: currentUserId })
-  .select('followingId')
-  .lean();
+            .select('followingId')
+            .lean();
 
-const followingList = follows
-  .map(f => (f.followingId ? String(f.followingId) : null))
-  .filter(Boolean);
+          const followingList = follows
+            .map(f => (f.followingId ? String(f.followingId) : null))
+            .filter(Boolean);
 
-followingSet = new Set(followingList);
-await setCachedFollowing(currentUserId, followingList);
+          followingSet = new Set(followingList);
+          await setCachedFollowing(currentUserId, followingList);
 
         }
       } catch (e) { /* ignore auth parse errors */ }
@@ -836,37 +837,37 @@ await setCachedFollowing(currentUserId, followingList);
       likes.forEach(l => likedSet.add(String(l.postId)));
     }
 
-   const results = posts.map(p => {
-  const pid = String(p._id);
+    const results = posts.map(p => {
+      const pid = String(p._id);
 
-  const authorId = p.userId ? String(p.userId) : '';
-  const authorUsername = p.username || '';
+      const authorId = p.userId ? String(p.userId) : '';
+      const authorUsername = p.username || '';
 
-  return {
-    id: pid,
+      return {
+        id: pid,
 
-    userId: authorId,
-    username: authorUsername,
-    user: authorUsername, // frontend uchun qoldi
+        userId: authorId,
+        username: authorUsername,
+        user: authorUsername, // frontend uchun qoldi
 
-    title: p.title,
-    description: p.description,
-    type: p.type,
-    media: p.media,
-    createdAt: p.createdAt,
+        title: p.title,
+        description: p.description,
+        type: p.type,
+        media: p.media,
+        createdAt: p.createdAt,
 
-    views: p.views || 0,
-    commentsCount: p.commentsCount || 0,
-    likesCount: p.likesCount || 0,
+        views: p.views || 0,
+        commentsCount: p.commentsCount || 0,
+        likesCount: p.likesCount || 0,
 
-    liked: currentUserId ? likedSet.has(pid) : false,
+        liked: currentUserId ? likedSet.has(pid) : false,
 
-    // ✅ ASOSIY FIX SHU:
-    isFollowing: currentUserId && authorId
-      ? followingSet.has(authorId)
-      : false
-  };
-});
+        // ✅ ASOSIY FIX SHU:
+        isFollowing: currentUserId && authorId
+          ? followingSet.has(authorId)
+          : false
+      };
+    });
 
     const response = { page, limit, posts: results };
     postsCache.set(cacheKey, response);
@@ -890,7 +891,7 @@ app.get('/posts/reels', async (req, res) => {
       try {
         const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         userId = payload.id;
-      } catch {}
+      } catch { }
     }
 
     const query = { status: 'approved', type: 'video' };
@@ -998,9 +999,9 @@ app.get("/notifications", authMiddleware, async (req, res) => {
     // Men ularni follow qilib qo‘yganmanmi? (follow-back holati)
     const follows = actorIds.length
       ? await Follow.find({
-          followerId: me,
-          followingId: { $in: actorIds }
-        }).select("followingId").lean()
+        followerId: me,
+        followingId: { $in: actorIds }
+      }).select("followingId").lean()
       : [];
 
     const followingBackSet = new Set(follows.map(f => String(f.followingId)));
@@ -1013,10 +1014,10 @@ app.get("/notifications", authMiddleware, async (req, res) => {
 
       actor: n.actorId
         ? {
-            id: String(n.actorId._id),
-            username: n.actorId.username,
-            avatar: n.actorId.avatar || null
-          }
+          id: String(n.actorId._id),
+          username: n.actorId.username,
+          avatar: n.actorId.avatar || null
+        }
         : null,
 
       // UI tugma uchun:
@@ -1089,7 +1090,7 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
       const set = cached ? cached : new Set();
       set.add(String(followingId));
       await setCachedFollowing(followerId, Array.from(set));
-    } catch {}
+    } catch { }
 
     invalidateUserPostsCache(followerId);
 
@@ -1115,12 +1116,12 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
       followingId: targetUser._id
     });
     try {
-  const cached = await getCachedFollowing(followerId);
-  if (cached) {
-    cached.delete(String(targetUser._id));
-    await setCachedFollowing(followerId, Array.from(cached));
-  }
-} catch {}
+      const cached = await getCachedFollowing(followerId);
+      if (cached) {
+        cached.delete(String(targetUser._id));
+        await setCachedFollowing(followerId, Array.from(cached));
+      }
+    } catch { }
 
 
     invalidateUserPostsCache(followerId);
@@ -1238,7 +1239,7 @@ app.post('/posts/:id/view', viewLimiter, async (req, res) => {
       try {
         const payload = jwt.verify(req.cookies.accessToken, JWT_SECRET);
         viewer = payload.id;
-      } catch {}
+      } catch { }
     }
 
     const result = await Post.updateOne(
@@ -1280,11 +1281,11 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 
 app.get('/profile/:username', async (req, res) => {
   try {
-const uname = String(req.params.username || '').toLowerCase();
-const u = await User.findOne({ username: uname })
-  .select('username avatar bio website profession lastSeenAt updatedAt')
+    const uname = String(req.params.username || '').toLowerCase();
+    const u = await User.findOne({ username: uname })
+      .select('username avatar bio website profession lastSeenAt updatedAt')
 
-  .lean();
+      .lean();
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
     const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
@@ -1292,16 +1293,16 @@ const u = await User.findOne({ username: uname })
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
-  username: u.username,
-  avatar: u.avatar || null,
-  bio: u.bio || '',
-  website: u.website || '',
-  profession: u.profession || '',
-  posts: postsCount,
-  followers,
-  following,
-  lastSeenAt: u.lastSeenAt || null
-});
+      username: u.username,
+      avatar: u.avatar || null,
+      bio: u.bio || '',
+      website: u.website || '',
+      profession: u.profession || '',
+      posts: postsCount,
+      followers,
+      following,
+      lastSeenAt: u.lastSeenAt || null
+    });
 
   } catch (e) {
     console.error('GET PROFILE ERROR:', e);
@@ -1456,22 +1457,70 @@ app.get('/chats', authMiddleware, async (req, res) => {
 });
 
 
+// ✅ 6.1 — replaced with cursor/limit pagination
 app.get('/messages/:username', authMiddleware, async (req, res) => {
   try {
     const me = req.user.username;
-    const other = req.params.username;
+    const other = String(req.params.username || '').trim();
 
-    const msgs = await Message.find({
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || '30', 10)));
+    const cursorRaw = req.query.cursor ? String(req.query.cursor) : null;
+
+    let cursorCreatedAt = null;
+    let cursorId = null;
+
+    if (cursorRaw) {
+      const [iso, id] = cursorRaw.split('__');
+      if (iso) {
+        const d = new Date(iso);
+        if (!isNaN(d.getTime())) cursorCreatedAt = d;
+      }
+      if (id && mongoose.Types.ObjectId.isValid(id)) {
+        cursorId = new mongoose.Types.ObjectId(id);
+      }
+    }
+
+    const baseOr = {
       $or: [
         { from: me, to: other },
         { from: other, to: me }
       ]
-    }).sort({ createdAt: 1 });
+    };
 
-    res.json(msgs);
+    const query = { ...baseOr };
+
+    if (cursorCreatedAt && cursorId) {
+      query.$and = [
+        {
+          $or: [
+            { createdAt: { $lt: cursorCreatedAt } },
+            { createdAt: cursorCreatedAt, _id: { $lt: cursorId } }
+          ]
+        }
+      ];
+    } else if (cursorCreatedAt) {
+      query.createdAt = { $lt: cursorCreatedAt };
+    }
+
+    // newest -> oldest olib, keyin UI uchun reverse qilamiz
+    const docs = await Message.find(query)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1)
+      .lean();
+
+    const hasMore = docs.length > limit;
+    const slice = hasMore ? docs.slice(0, limit) : docs;
+
+    slice.reverse(); // oldest -> newest
+
+    const nextCursor = hasMore && slice.length
+      ? `${new Date(slice[0].createdAt).toISOString()}__${slice[0]._id}`
+      : null;
+
+    res.json({ messages: slice, hasMore, nextCursor });
   } catch (e) {
-    console.error('GET /messages ERROR:', e);
-    res.status(500).json([]);
+    console.error('GET /messages PAGINATION ERROR:', e);
+    res.status(500).json({ messages: [], hasMore: false, nextCursor: null });
   }
 });
 
@@ -1493,7 +1542,7 @@ app.post('/messages', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
- 
+
 app.get('/users/search', authMiddleware, async (req, res) => {
   try {
     const qRaw = String(req.query.q || '').trim();
@@ -1715,14 +1764,81 @@ io.on('connection', socket => {
     if (to) io.to(to).emit('stop_typing', { from: username });
   });
 
-  socket.on('private_message', async (data) => {
+  // ✅ 5.2 — Socket private_message ACK + idempotency (replaced fully)
+  socket.on('private_message', async (data, ack) => {
     try {
-      const { to, text } = data || {};
-      if (!to || !text || !String(text).trim()) return;
-      const msg = await Message.create({ from: username, to, text: String(text).trim(), createdAt: new Date() });
-      io.to(to).emit('private_message', msg);
-      io.to(username).emit('private_message', msg);
-    } catch (e) { console.error('SOCKET PRIVATE_MESSAGE ERROR:', e); }
+      const to = String(data?.to || '').trim();
+      const rawText = String(data?.text || '').trim();
+      const clientMsgId = String(data?.clientMsgId || data?.tempId || '').trim(); // ✅ tempId = clientMsgId
+      const clientCreatedAt = data?.clientCreatedAt ? new Date(data.clientCreatedAt) : null;
+
+      if (!to || !rawText) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Missing to/text' });
+        return;
+      }
+
+      // sanitize + limit
+      const text = sanitizeHtml(rawText, { allowedTags: [], allowedAttributes: {} })
+        .trim()
+        .slice(0, 2000);
+
+      if (!text) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Empty text' });
+        return;
+      }
+
+      // ✅ idempotency: shu clientMsgId oldin saqlangan bo‘lsa qayta yaratmaymiz
+      if (clientMsgId) {
+        const existing = await Message.findOne({ from: username, clientMsgId }).lean();
+        if (existing) {
+          const payload = {
+            _id: String(existing._id),
+            from: existing.from,
+            to: existing.to,
+            text: existing.text,
+            createdAt: existing.createdAt,
+            readAt: existing.readAt || null,
+            editedAt: existing.editedAt || null,
+            tempId: clientMsgId
+          };
+
+          io.to(to).emit('private_message', payload);
+          io.to(username).emit('private_message', payload);
+
+          if (typeof ack === 'function') ack({ ok: true, tempId: clientMsgId, message: payload });
+          return;
+        }
+      }
+
+      const createdAt = (clientCreatedAt && !isNaN(clientCreatedAt.getTime())) ? clientCreatedAt : new Date();
+
+      const doc = await Message.create({
+        from: username,
+        to,
+        text,
+        createdAt,
+        clientMsgId: clientMsgId || null
+      });
+
+      const payload = {
+        _id: String(doc._id),
+        from: doc.from,
+        to: doc.to,
+        text: doc.text,
+        createdAt: doc.createdAt,
+        readAt: doc.readAt || null,
+        editedAt: doc.editedAt || null,
+        tempId: clientMsgId || null
+      };
+
+      io.to(to).emit('private_message', payload);
+      io.to(username).emit('private_message', payload);
+
+      if (typeof ack === 'function') ack({ ok: true, tempId: clientMsgId || null, message: payload });
+    } catch (e) {
+      console.error('SOCKET PRIVATE_MESSAGE ERROR:', e);
+      if (typeof ack === 'function') ack({ ok: false, error: 'Server error' });
+    }
   });
 
   // === mark_seen handler (qo'shildi, authoritative payload) ===
@@ -1771,6 +1887,90 @@ io.on('connection', socket => {
     }
   });
   // === end mark_seen ===
+
+  // ✅ DELETE (real-time) — added right after mark_seen
+  socket.on('delete_message', async (data, ack) => {
+    try {
+      const id = String(data?.id || '').trim();
+      if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Bad id' });
+        return;
+      }
+
+      const msg = await Message.findById(id).lean();
+      if (!msg) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Not found' });
+        return;
+      }
+
+      if (String(msg.from) !== String(username)) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Not owner' });
+        return;
+      }
+
+      await Message.deleteOne({ _id: id, from: username });
+
+      const payload = { id, from: msg.from, to: msg.to, at: new Date() };
+      io.to(msg.to).emit('message_deleted', payload);
+      io.to(username).emit('message_deleted', payload);
+
+      if (typeof ack === 'function') ack({ ok: true, id });
+    } catch (e) {
+      console.error('delete_message ERROR:', e);
+      if (typeof ack === 'function') ack({ ok: false, error: 'Server error' });
+    }
+  });
+
+  // ✅ EDIT (real-time) — added right after mark_seen
+  socket.on('edit_message', async (data, ack) => {
+    try {
+      const id = String(data?.id || '').trim();
+      const raw = String(data?.text || '').trim();
+
+      if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Bad id' });
+        return;
+      }
+
+      const text = sanitizeHtml(raw, { allowedTags: [], allowedAttributes: {} })
+        .trim()
+        .slice(0, 2000);
+
+      if (!text) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Empty text' });
+        return;
+      }
+
+      const now = new Date();
+
+      const updated = await Message.findOneAndUpdate(
+        { _id: id, from: username },
+        { $set: { text, editedAt: now } },
+        { new: true }
+      ).lean();
+
+      if (!updated) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Not found/Not owner' });
+        return;
+      }
+
+      const payload = {
+        id: String(updated._id),
+        from: updated.from,
+        to: updated.to,
+        text: updated.text,
+        editedAt: updated.editedAt
+      };
+
+      io.to(updated.to).emit('message_edited', payload);
+      io.to(username).emit('message_edited', payload);
+
+      if (typeof ack === 'function') ack({ ok: true, message: payload });
+    } catch (e) {
+      console.error('edit_message ERROR:', e);
+      if (typeof ack === 'function') ack({ ok: false, error: 'Server error' });
+    }
+  });
 
 });
 

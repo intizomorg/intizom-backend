@@ -19,7 +19,21 @@ const MessageSchema = new mongoose.Schema({
     maxlength: 2000
   },
 
-  // ✅ YANGI: xabar qachon o‘qilganini saqlaydi
+  // ✅ client yuborgan tempId (idempotency uchun)
+  clientMsgId: {
+    type: String,
+    default: null,
+    index: true
+  },
+
+  // ✅ edit bo‘lganda
+  editedAt: {
+    type: Date,
+    default: null,
+    index: true
+  },
+
+  // ✅ xabar qachon o‘qilganini saqlaydi
   readAt: {
     type: Date,
     default: null,
@@ -32,12 +46,17 @@ const MessageSchema = new mongoose.Schema({
   }
 });
 
-// 🔍 Indexlar
+// 🔍 Mavjud indexlar
 MessageSchema.index({ from: 1, to: 1, createdAt: -1 });
-
-// 🔍 Tavsiya etilgan qo‘shimcha index (read status + chat ordering)
 MessageSchema.index({ to: 1, from: 1, readAt: 1, createdAt: -1 });
 
+// ✅ idempotency: bitta user bir tempId ni qayta yuborsa duplicate bo‘lmaydi
+MessageSchema.index(
+  { from: 1, clientMsgId: 1 },
+  { unique: true, sparse: true }
+);
+
+// 🧼 XSS sanitization
 MessageSchema.pre("save", function () {
   this.text = sanitizeHtml(String(this.text || ""), {
     allowedTags: [],
