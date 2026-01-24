@@ -1243,9 +1243,18 @@ app.post('/posts/:id/view', viewLimiter, async (req, res) => {
     }
 
     const result = await Post.updateOne(
-      { _id: req.params.id, viewedBy: { $ne: viewer } },
-      { $inc: { views: 1 }, $push: { viewedBy: viewer } }
-    );
+  { _id: req.params.id, viewedBy: { $ne: viewer } },
+  {
+    $inc: { views: 1 },
+    $push: {
+      viewedBy: {
+        $each: [viewer],
+        $slice: -5000  // limit: oxirgi 5000 viewer (MVP uchun yetarli)
+      }
+    }
+  }
+);
+
 
     res.json({ viewed: result.modifiedCount === 1 });
   } catch (e) {
