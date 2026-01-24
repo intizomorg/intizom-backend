@@ -894,7 +894,44 @@ app.get('/posts/reels', async (req, res) => {
       } catch { }
     }
 
+    // --- ADDED: feed handling (before building query) ---
+    const feed = String(req.query.feed || 'all');
+
+    let followingSet = new Set();
+    if (feed === 'following') {
+      // if not logged in, return empty feed for 'following'
+      if (!userId) return res.json({ posts: [], hasMore: false });
+
+      const cached = await getCachedFollowing(userId);
+      if (cached) {
+        // cached could be an array or a Set
+        followingSet = Array.isArray(cached) ? new Set(cached) : new Set(Array.from(cached));
+      } else {
+        const follows = await Follow.find({ followerId: userId })
+          .select('followingId')
+          .lean();
+
+        const followingList = follows
+          .map(f => (f.followingId ? String(f.followingId) : null))
+          .filter(Boolean);
+
+        followingSet = new Set(followingList);
+        // cache as array of ids
+        await setCachedFollowing(userId, followingList);
+      }
+
+      // if user follows nobody, return empty result early
+      if (!followingSet.size) return res.json({ posts: [], hasMore: false });
+    }
+    // --- END ADDED ---
+
+    // Build query (works for both 'all' and 'following' — for 'following' we add $in below)
     const query = { status: 'approved', type: 'video' };
+
+    if (feed === 'following') {
+      const ids = Array.from(followingSet).filter(s => mongoose.Types.ObjectId.isValid(s));
+      query.userId = { $in: ids };
+    }
 
     const docs = await Post.find(query)
       .sort({ createdAt: -1 })
@@ -927,6 +964,7 @@ app.get('/posts/reels', async (req, res) => {
   }
 });
 
+
 app.get('/posts/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id).lean();
@@ -950,19 +988,28 @@ app.post('/posts/:id/like', authMiddleware, async (req, res) => {
 
     try {
       await Like.create({ postId, userId, createdAt: new Date() });
-      await Post.updateOne({ _id: postId }, { $inc: { likesCount: 1 } });
+
+      const updated = await Post.findOneAndUpdate(
+        { _id: postId },
+        { $inc: { likesCount: 1 } },
+        { new: true }
+      ).select('likesCount');
+
       invalidateUserPostsCache(userId);
+
+      return res.json({ likesCount: updated?.likesCount ?? 0, liked: true });
     } catch (e) {
       if (e.code !== 11000) throw e;
-    }
 
-    const post = await Post.findById(postId).select('likesCount');
-    res.json({ likesCount: post.likesCount });
+      const post = await Post.findById(postId).select('likesCount');
+      return res.json({ likesCount: post?.likesCount ?? 0, liked: true });
+    }
   } catch (e) {
     console.error("LIKE ERROR:", e);
     res.status(500).json({ msg: "Server xatosi" });
   }
 });
+
 
 app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
   try {
@@ -970,18 +1017,30 @@ app.post('/posts/:id/unlike', authMiddleware, async (req, res) => {
     const userId = req.user.id;
 
     const removed = await Like.findOneAndDelete({ postId, userId });
+
+    let updated = null;
     if (removed) {
-      await Post.updateOne({ _id: postId, likesCount: { $gt: 0 } }, { $inc: { likesCount: -1 } });
+      updated = await Post.findOneAndUpdate(
+        { _id: postId, likesCount: { $gt: 0 } },
+        { $inc: { likesCount: -1 } },
+        { new: true }
+      ).select('likesCount');
+
       invalidateUserPostsCache(userId);
     }
 
-    const post = await Post.findById(postId).select('likesCount');
-    res.json({ likesCount: post.likesCount });
+    if (!updated) {
+      const post = await Post.findById(postId).select('likesCount');
+      return res.json({ likesCount: post?.likesCount ?? 0, liked: false });
+    }
+
+    return res.json({ likesCount: updated.likesCount ?? 0, liked: false });
   } catch (e) {
     console.error("UNLIKE ERROR:", e);
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 app.get("/notifications", authMiddleware, async (req, res) => {
   try {
     const me = req.user.id;
@@ -1045,9 +1104,20 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
       text,
       createdAt: new Date()
     });
-    await Post.updateOne({ _id: postId }, { $inc: { commentsCount: 1 } });
-    invalidateUserPostsCache(req.user.id);
-    res.json({ msg: 'Comment qo‘shildi', comment: c });
+    const updated = await Post.findOneAndUpdate(
+  { _id: postId },
+  { $inc: { commentsCount: 1 } },
+  { new: true }
+).select('commentsCount');
+
+invalidateUserPostsCache(req.user.id);
+
+res.json({
+  msg: 'Comment qo‘shildi',
+  comment: c,
+  commentsCount: updated?.commentsCount ?? null
+});
+
   } catch (e) {
     console.error('COMMENT ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
