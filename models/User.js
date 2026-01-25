@@ -23,6 +23,9 @@ const PROFESSION_ENUM = [
 
 const UserSchema = new mongoose.Schema(
   {
+    // ===== Qo'shilgan: name maydoni =====
+    name: { type: String, default: "", trim: true, maxlength: 50 },
+
     username: {
       type: String,
       required: true,
