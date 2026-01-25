@@ -1376,17 +1376,23 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
 app.get('/profile/:username', async (req, res) => {
   try {
     const uname = String(req.params.username || '').toLowerCase();
-    const u = await User.findOne({ username: uname })
-      .select('username avatar bio website profession lastSeenAt updatedAt')
 
+    const u = await User.findOne({ username: uname })
+      .select('name username avatar bio website profession lastSeenAt updatedAt')
       .lean();
+
     if (!u) return res.status(404).json({ msg: 'User not found' });
 
-    const postsCount = await Post.countDocuments({ userId: u._id, status: 'approved' });
+    const postsCount = await Post.countDocuments({
+      userId: u._id,
+      status: 'approved'
+    });
+
     const followers = await Follow.countDocuments({ followingId: u._id });
     const following = await Follow.countDocuments({ followerId: u._id });
 
     res.json({
+      name: u.name || "",
       username: u.username,
       avatar: u.avatar || null,
       bio: u.bio || '',
@@ -1403,6 +1409,7 @@ app.get('/profile/:username', async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
+
 
 app.get('/posts/user/:username', async (req, res) => {
   try {
@@ -1467,6 +1474,8 @@ app.get('/profile/:username/following', async (req, res) => {
 });
 app.put('/profile', authMiddleware, async (req, res) => {
   try {
+    // ✅ name ni qo‘shdik
+    const name = String(req.body?.name || '').trim().slice(0, 50);
     const bio = String(req.body?.bio || '').slice(0, 300);
     const website = String(req.body?.website || '').slice(0, 200);
 
@@ -1475,9 +1484,10 @@ app.put('/profile', authMiddleware, async (req, res) => {
 
     const updated = await User.findByIdAndUpdate(
       req.user.id,
-      { $set: { bio, website, profession } },
+      { $set: { name, bio, website, profession } }, // ✅ name qo‘shildi
       { new: true, runValidators: true, context: 'query' }
-    ).select('username avatar bio website profession updatedAt');
+    ).select('name username avatar bio website profession updatedAt'); // ✅ select ga name qo‘shildi
+
     return res.json({ msg: 'Profile updated', profile: updated });
   } catch (e) {
     console.error("PROFILE UPDATE ERROR:", e);
