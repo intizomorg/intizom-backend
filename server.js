@@ -1486,7 +1486,6 @@ app.put('/profile', authMiddleware, async (req, res) => {
 });
 
 
-
 // Messages API
 app.get('/chats', authMiddleware, async (req, res) => {
   try {
@@ -1509,6 +1508,8 @@ app.get('/chats', authMiddleware, async (req, res) => {
         }
       },
       { $sort: { createdAt: -1 } },
+
+      // GROUP — har bir chat uchun oxirgi xabarni olish
       {
         $group: {
           _id: "$other",
@@ -1516,14 +1517,16 @@ app.get('/chats', authMiddleware, async (req, res) => {
           lastMessage: { $first: "$text" },
           createdAt: { $first: "$createdAt" },
 
-          // yangi maydonlar — oxirgi incoming xabar va oxirgi incoming xabarni o'qilgani vaqti
           lastIncomingAt: {
-            $max: { $cond: [{ $eq: ["$to", me] }, "$createdAt", null] }
+            $max: {
+              $cond: [{ $eq: ["$to", me] }, "$createdAt", null]
+            }
           },
           lastIncomingReadAt: {
-            $max: { $cond: [{ $eq: ["$to", me] }, "$readAt", null] }
+            $max: {
+              $cond: [{ $eq: ["$to", me] }, "$readAt", null]
+            }
           },
-
           unreadCount: {
             $sum: {
               $cond: [
@@ -1540,6 +1543,21 @@ app.get('/chats', authMiddleware, async (req, res) => {
           }
         }
       },
+
+      // ✅ ADD: other user avatar-ni olib kelish
+      {
+        $lookup: {
+          from: "users",        // users collection
+          localField: "_id",    // _id = other username
+          foreignField: "username",
+          as: "u"
+        }
+      },
+      { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+      { $addFields: { avatar: "$u.avatar" } },
+      { $project: { u: 0 } },
+
+      // oxirgi sort
       { $sort: { createdAt: -1 } }
     ]);
 
@@ -1549,7 +1567,6 @@ app.get('/chats', authMiddleware, async (req, res) => {
     res.status(500).json([]);
   }
 });
-
 
 // ✅ 6.1 — replaced with cursor/limit pagination
 app.get('/messages/:username', authMiddleware, async (req, res) => {
