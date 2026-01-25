@@ -10,11 +10,12 @@ const NotificationSchema = new mongoose.Schema(
     },
 
     type: {
-      type: String,
-      enum: ["follow"],
-      required: true,
-      index: true
-    },
+  type: String,
+  enum: ["follow", "unfollow"],
+  required: true,
+  index: true
+},
+
 
     actorId: { // kim qildi (kim follow qildi)
       type: mongoose.Schema.Types.ObjectId,

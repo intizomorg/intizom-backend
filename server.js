@@ -1045,7 +1045,7 @@ app.get("/notifications", authMiddleware, async (req, res) => {
   try {
     const me = req.user.id;
 
-    const notifs = await Notification.find({ userId: me, type: "follow" })
+    const notifs = await Notification.find({ userId: me, type: { $in: ["follow", "unfollow"] } })
       .sort({ createdAt: -1 })
       .limit(100)
       .populate("actorId", "username avatar")
@@ -1171,28 +1171,43 @@ app.post('/follow/:username', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
-
 app.post('/unfollow/:username', authMiddleware, async (req, res) => {
   try {
     const followerId = req.user.id;
     const username = req.params.username;
 
     const targetUser = await User.findOne({ username }).select('_id');
-    if (!targetUser) return res.status(404).json({ msg: 'User not found' });
+    if (!targetUser) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     await Follow.deleteOne({
       followerId,
       followingId: targetUser._id
     });
+
+    // <-- NOTIFY: unfollow
+    try {
+      await Notification.create({
+        userId: targetUser._id,   // notification recipient (u odam)
+        type: "unfollow",
+        actorId: followerId       // kim unfollow qildi
+      });
+    } catch (e) {
+      console.warn(
+        "Notification(unfollow) create failed:",
+        e.message || e
+      );
+    }
+    // end NOTIFY
+
     try {
       const cached = await getCachedFollowing(followerId);
       if (cached) {
         cached.delete(String(targetUser._id));
         await setCachedFollowing(followerId, Array.from(cached));
       }
-    } catch { }
-
+    } catch {}
 
     invalidateUserPostsCache(followerId);
 
