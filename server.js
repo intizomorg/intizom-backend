@@ -1644,6 +1644,33 @@ app.get('/messages/:username', authMiddleware, async (req, res) => {
     res.status(500).json({ messages: [], hasMore: false, nextCursor: null });
   }
 });
+// =======================
+// DELETE WHOLE CHAT THREAD
+// =======================
+app.delete('/chats/:username', authMiddleware, async (req, res) => {
+  try {
+    const me = req.user.username;
+    const other = String(req.params.username || '').trim();
+
+    if (!other) return res.status(400).json({ msg: 'Username required' });
+    if (other === me) return res.status(400).json({ msg: 'Cannot delete self chat' });
+
+    const result = await Message.deleteMany({
+      $or: [
+        { from: me, to: other },
+        { from: other, to: me }
+      ]
+    });
+
+    return res.json({
+      ok: true,
+      deletedCount: result?.deletedCount ?? 0
+    });
+  } catch (e) {
+    console.error('DELETE CHAT ERROR:', e);
+    return res.status(500).json({ msg: 'Server xatosi' });
+  }
+});
 
 app.post('/messages', authMiddleware, async (req, res) => {
   try {
