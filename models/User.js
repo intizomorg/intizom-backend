@@ -78,6 +78,13 @@ const UserSchema = new mongoose.Schema(
       default: ""
     },
 
+    // ===== Qo'shilgan: verified maydoni (default: false) =====
+    verified: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
     role: {
       type: String,
       enum: ["user", "admin"],
