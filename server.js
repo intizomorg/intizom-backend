@@ -1397,6 +1397,7 @@ app.get('/profile/:username', async (req, res) => {
       bio: u.bio || '',
       website: u.website || '',
       profession: u.profession || '',
+      verified: !!u.verified, // ✅ 
       posts: postsCount,
       followers,
       following,
