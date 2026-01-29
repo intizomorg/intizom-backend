@@ -40,6 +40,28 @@ const MessageSchema = new mongoose.Schema({
     index: true
   },
 
+  // ✅ Reply (quote) — qaysi message ga javob
+  replyTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Message",
+    default: null,
+    index: true
+  },
+
+  // ✅ Delivered status (✔✔) — receiver socketiga yetib kelganda
+  deliveredAt: {
+    type: Date,
+    default: null,
+    index: true
+  },
+
+  // ✅ Reactions — emoji -> usernamelar
+  reactions: {
+    type: Map,
+    of: [String], // ["ali", "vali"]
+    default: {}
+  },
+
   createdAt: {
     type: Date,
     default: Date.now
@@ -49,6 +71,10 @@ const MessageSchema = new mongoose.Schema({
 // 🔍 Mavjud indexlar
 MessageSchema.index({ from: 1, to: 1, createdAt: -1 });
 MessageSchema.index({ to: 1, from: 1, readAt: 1, createdAt: -1 });
+
+// ✅ Yangi indexlar (tezlik uchun)
+MessageSchema.index({ to: 1, deliveredAt: 1, createdAt: -1 });
+MessageSchema.index({ to: 1, readAt: 1, createdAt: -1 });
 
 // ✅ idempotency: bitta user bir tempId ni qayta yuborsa duplicate bo‘lmaydi
 MessageSchema.index(

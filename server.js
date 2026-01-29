@@ -483,7 +483,7 @@ async function setCachedFollowing(userId, list) {
   } catch (e) {
     console.warn('Index ensure warning:', e.message || e);
   }
-})().catch(() => {});
+})().catch(() => { });
 
 // -----------------
 // Cache invalidation helpers
@@ -1105,18 +1105,18 @@ app.post('/posts/:id/comment', authMiddleware, async (req, res) => {
       createdAt: new Date()
     });
     const updated = await Post.findOneAndUpdate(
-  { _id: postId },
-  { $inc: { commentsCount: 1 } },
-  { new: true }
-).select('commentsCount');
+      { _id: postId },
+      { $inc: { commentsCount: 1 } },
+      { new: true }
+    ).select('commentsCount');
 
-invalidateUserPostsCache(req.user.id);
+    invalidateUserPostsCache(req.user.id);
 
-res.json({
-  msg: 'Comment qo‘shildi',
-  comment: c,
-  commentsCount: updated?.commentsCount ?? null
-});
+    res.json({
+      msg: 'Comment qo‘shildi',
+      comment: c,
+      commentsCount: updated?.commentsCount ?? null
+    });
 
   } catch (e) {
     console.error('COMMENT ERROR:', e);
@@ -1124,7 +1124,6 @@ res.json({
   }
 });
 
-// Follow / Unfollow
 // Follow / Unfollow
 app.post('/follow/:username', authMiddleware, async (req, res) => {
   try {
@@ -1207,7 +1206,7 @@ app.post('/unfollow/:username', authMiddleware, async (req, res) => {
         cached.delete(String(targetUser._id));
         await setCachedFollowing(followerId, Array.from(cached));
       }
-    } catch {}
+    } catch { }
 
     invalidateUserPostsCache(followerId);
 
@@ -1328,17 +1327,17 @@ app.post('/posts/:id/view', viewLimiter, async (req, res) => {
     }
 
     const result = await Post.updateOne(
-  { _id: req.params.id, viewedBy: { $ne: viewer } },
-  {
-    $inc: { views: 1 },
-    $push: {
-      viewedBy: {
-        $each: [viewer],
-        $slice: -5000  // limit: oxirgi 5000 viewer (MVP uchun yetarli)
+      { _id: req.params.id, viewedBy: { $ne: viewer } },
+      {
+        $inc: { views: 1 },
+        $push: {
+          viewedBy: {
+            $each: [viewer],
+            $slice: -5000  // limit: oxirgi 5000 viewer (MVP uchun yetarli)
+          }
+        }
       }
-    }
-  }
-);
+    );
 
 
     res.json({ viewed: result.modifiedCount === 1 });
@@ -1627,6 +1626,7 @@ app.get('/messages/:username', authMiddleware, async (req, res) => {
     const docs = await Message.find(query)
       .sort({ createdAt: -1, _id: -1 })
       .limit(limit + 1)
+      .populate("replyTo", "from to text createdAt") // ✅ reply preview
       .lean();
 
     const hasMore = docs.length > limit;
@@ -1920,6 +1920,11 @@ io.on('connection', socket => {
       const clientMsgId = String(data?.clientMsgId || data?.tempId || '').trim(); // ✅ tempId = clientMsgId
       const clientCreatedAt = data?.clientCreatedAt ? new Date(data.clientCreatedAt) : null;
 
+      // ✅ 3.1 — Client’dan replyTo qabul qilamiz
+      const replyTo = data?.replyTo && mongoose.Types.ObjectId.isValid(data.replyTo)
+        ? new mongoose.Types.ObjectId(data.replyTo)
+        : null;
+
       if (!to || !rawText) {
         if (typeof ack === 'function') ack({ ok: false, error: 'Missing to/text' });
         return;
@@ -1939,6 +1944,10 @@ io.on('connection', socket => {
       if (clientMsgId) {
         const existing = await Message.findOne({ from: username, clientMsgId }).lean();
         if (existing) {
+          const populatedReplyExisting = existing.replyTo
+            ? await Message.findById(existing.replyTo).select("from to text createdAt").lean()
+            : null;
+
           const payload = {
             _id: String(existing._id),
             from: existing.from,
@@ -1946,8 +1955,19 @@ io.on('connection', socket => {
             text: existing.text,
             createdAt: existing.createdAt,
             readAt: existing.readAt || null,
+            deliveredAt: existing.deliveredAt || null, // ✅ delivered
             editedAt: existing.editedAt || null,
-            tempId: clientMsgId
+            tempId: clientMsgId,
+            replyTo: populatedReplyExisting
+              ? {
+                _id: String(populatedReplyExisting._id),
+                from: populatedReplyExisting.from,
+                to: populatedReplyExisting.to,
+                text: populatedReplyExisting.text,
+                createdAt: populatedReplyExisting.createdAt
+              }
+              : null,
+            reactions: existing.reactions || {} // ✅ initial/actual
           };
 
           io.to(to).emit('private_message', payload);
@@ -1960,13 +1980,36 @@ io.on('connection', socket => {
 
       const createdAt = (clientCreatedAt && !isNaN(clientCreatedAt.getTime())) ? clientCreatedAt : new Date();
 
+      // ✅ 3.2 — Message.create ichiga replyTo + deliveredAt + reactions
       const doc = await Message.create({
         from: username,
         to,
         text,
         createdAt,
-        clientMsgId: clientMsgId || null
+        clientMsgId: clientMsgId || null,
+        replyTo: replyTo || null,
+        deliveredAt: null,
+        reactions: {}
       });
+
+      // ✅ 3.3 — delivered: receiver online bo'lsa deliveredAt qo'yamiz
+      let deliveredAt = null;
+      const receiverOnline =
+        (redisAvailable && redisClient)
+          ? await redisClient.sismember('online_users', to)
+          : global.onlineUsers?.has(to);
+
+      if (receiverOnline) {
+        deliveredAt = new Date();
+        try {
+          await Message.updateOne({ _id: doc._id }, { $set: { deliveredAt } });
+        } catch { }
+      }
+
+      // ✅ 3.4 — Payload’ga deliveredAt + replyTo + reactions
+      const populatedReply = replyTo
+        ? await Message.findById(replyTo).select("from to text createdAt").lean()
+        : null;
 
       const payload = {
         _id: String(doc._id),
@@ -1975,12 +2018,32 @@ io.on('connection', socket => {
         text: doc.text,
         createdAt: doc.createdAt,
         readAt: doc.readAt || null,
+        deliveredAt: deliveredAt || null,     // ✅ delivered
         editedAt: doc.editedAt || null,
-        tempId: clientMsgId || null
+        tempId: clientMsgId || null,
+        replyTo: populatedReply
+          ? {
+            _id: String(populatedReply._id),
+            from: populatedReply.from,
+            to: populatedReply.to,
+            text: populatedReply.text,
+            createdAt: populatedReply.createdAt
+          }
+          : null,
+        reactions: {}                         // ✅ initial
       };
 
       io.to(to).emit('private_message', payload);
       io.to(username).emit('private_message', payload);
+
+      // ✅ 3.5 — Delivered update event (real-time) yuboramiz (senderga)
+      if (deliveredAt) {
+        io.to(username).emit("message_delivered", {
+          id: String(doc._id),
+          to,
+          deliveredAt
+        });
+      }
 
       if (typeof ack === 'function') ack({ ok: true, tempId: clientMsgId || null, message: payload });
     } catch (e) {
@@ -2117,6 +2180,63 @@ io.on('connection', socket => {
     } catch (e) {
       console.error('edit_message ERROR:', e);
       if (typeof ack === 'function') ack({ ok: false, error: 'Server error' });
+    }
+  });
+
+  // ✅ 4.1 — Reactions: react_message (toggle)
+  socket.on("react_message", async (data, ack) => {
+    try {
+      const id = String(data?.id || "").trim();
+      const emoji = String(data?.emoji || "").trim();
+
+      if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        if (typeof ack === "function") ack({ ok: false, error: "Bad id" });
+        return;
+      }
+      if (!emoji || emoji.length > 10) {
+        if (typeof ack === "function") ack({ ok: false, error: "Bad emoji" });
+        return;
+      }
+
+      const msg = await Message.findById(id).lean();
+      if (!msg) {
+        if (typeof ack === "function") ack({ ok: false, error: "Not found" });
+        return;
+      }
+
+      // only participants
+      const me = username;
+      if (msg.from !== me && msg.to !== me) {
+        if (typeof ack === "function") ack({ ok: false, error: "Not allowed" });
+        return;
+      }
+
+      // toggle reaction: add/remove username in reactions[emoji]
+      const key = `reactions.${emoji}`;
+      const already = Array.isArray(msg.reactions?.get?.(emoji))
+        ? msg.reactions.get(emoji).includes(me)
+        : (Array.isArray(msg.reactions?.[emoji]) ? msg.reactions[emoji].includes(me) : false);
+
+      const update = already
+        ? { $pull: { [key]: me } }
+        : { $addToSet: { [key]: me } };
+
+      const updated = await Message.findByIdAndUpdate(id, update, { new: true })
+        .select("reactions from to")
+        .lean();
+
+      const payload = {
+        id,
+        reactions: updated?.reactions || {}
+      };
+
+      io.to(updated.from).emit("message_reaction", payload);
+      io.to(updated.to).emit("message_reaction", payload);
+
+      if (typeof ack === "function") ack({ ok: true, payload });
+    } catch (e) {
+      console.error("react_message ERROR:", e);
+      if (typeof ack === "function") ack({ ok: false, error: "Server error" });
     }
   });
 
