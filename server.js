@@ -1377,7 +1377,8 @@ app.get('/profile/:username', async (req, res) => {
     const uname = String(req.params.username || '').toLowerCase();
 
     const u = await User.findOne({ username: uname })
-      .select('name username avatar bio website profession lastSeenAt updatedAt')
+      .select('name username avatar bio website profession verified lastSeenAt updatedAt')
+
       .lean();
 
     if (!u) return res.status(404).json({ msg: 'User not found' });
