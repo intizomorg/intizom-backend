@@ -1371,7 +1371,6 @@ app.get('/posts/:id/comments', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Server xatosi' });
   }
 });
-
 app.get('/profile/:username', async (req, res) => {
   try {
     const uname = String(req.params.username || '').toLowerCase();

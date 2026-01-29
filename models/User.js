@@ -107,7 +107,6 @@ function transform(doc, ret) {
   delete ret.password;
   return ret;
 }
-
 UserSchema.set("toJSON", { virtuals: true, transform });
 UserSchema.set("toObject", { virtuals: true, transform });
 
