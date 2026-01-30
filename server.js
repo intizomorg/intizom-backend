@@ -1597,8 +1597,9 @@ app.get('/chats', authMiddleware, async (req, res) => {
         }
       },
       { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
-      { $addFields: { avatar: "$u.avatar" } },
-      { $project: { u: 0 } },
+      { $addFields: { avatar: "$u.avatar", verified: { $ifNull: ["$u.verified", false] } } },
+{ $project: { u: 0 } },
+
 
       // oxirgi sort
       { $sort: { createdAt: -1 } }
