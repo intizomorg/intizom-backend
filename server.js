@@ -1719,15 +1719,18 @@ app.get('/users/search', authMiddleware, async (req, res) => {
     const users = await User.find({
       username: { $regex: `^${escaped}`, $options: 'i' }   // ✅ boshidan boshlab
     })
-      .select('username avatar')
+      .select('username avatar verified')
+
       .limit(20)
       .lean();
 
     res.json(users.map(u => ({
-      id: String(u._id),
-      username: u.username,
-      avatar: u.avatar || null
-    })));
+  id: String(u._id),
+  username: u.username,
+  avatar: u.avatar || null,
+  verified: !!u.verified
+})));
+
   } catch (e) {
     console.error('USER SEARCH ERROR:', e);
     res.status(500).json([]);
