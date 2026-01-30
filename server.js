@@ -954,6 +954,21 @@ app.get('/posts/reels', async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
+       // ✅ VERIFIED MAP (reels uchun)
+const authorIds = docs
+  .map(p => p.userId)
+  .filter(Boolean)
+  .map(id => String(id));
+
+const verifiedMap = new Map();
+
+if (authorIds.length) {
+  const users = await User.find({ _id: { $in: authorIds } })
+    .select('_id verified')
+    .lean();
+
+  users.forEach(u => verifiedMap.set(String(u._id), !!u.verified));
+}
 
     const ids = docs.map(p => p._id);
 
@@ -967,11 +982,13 @@ app.get('/posts/reels', async (req, res) => {
 
     res.json({
       posts: docs.map(p => ({
-        ...p,
-        id: String(p._id),
-        userId: String(p.userId),
-        liked: userId ? likedSet.has(String(p._id)) : false
-      })),
+  ...p,
+  id: String(p._id),
+  userId: String(p.userId),
+  userVerified: verifiedMap.get(String(p.userId)) || false,  // 🔥
+  liked: userId ? likedSet.has(String(p._id)) : false
+})),
+
       hasMore: page * limit < total
     });
   } catch (e) {
