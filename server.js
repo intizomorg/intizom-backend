@@ -829,6 +829,21 @@ app.get('/posts', async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
+      // ✅ NEW: authors verified map (userId -> verified)
+const authorIds = posts
+  .map(p => p.userId)
+  .filter(Boolean)
+  .map(id => String(id));
+
+const verifiedMap = new Map();
+
+if (authorIds.length) {
+  const users = await User.find({ _id: { $in: authorIds } })
+    .select('_id verified')
+    .lean();
+
+  users.forEach(u => verifiedMap.set(String(u._id), !!u.verified));
+}
 
     const postIds = posts.map(p => p._id);
     const likedSet = new Set();
@@ -849,6 +864,7 @@ app.get('/posts', async (req, res) => {
         userId: authorId,
         username: authorUsername,
         user: authorUsername, // frontend uchun qoldi
+        userVerified: verifiedMap.get(authorId) || false,
 
         title: p.title,
         description: p.description,
