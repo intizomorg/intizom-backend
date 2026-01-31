@@ -995,18 +995,20 @@ if (authorIds.length) {
     }
 
     const total = await Post.countDocuments(query);
+res.json({
+  posts: docs.map(p => ({
+    ...p,
+    id: String(p._id),
+    userId: String(p.userId),
 
-    res.json({
-      posts: docs.map(p => ({
-  ...p,
-  id: String(p._id),
-  userId: String(p.userId),
-  userVerified: verifiedMap.get(String(p.userId)) || false,  // 🔥
-  liked: userId ? likedSet.has(String(p._id)) : false
-})),
+    userVerified: verifiedMap.get(String(p.userId)) || false,
+    userAvatar: avatarMap.get(String(p.userId)) || null,   // ✅ QO‘SHILADI
 
-      hasMore: page * limit < total
-    });
+    liked: userId ? likedSet.has(String(p._id)) : false
+  })),
+  hasMore: page * limit < total
+});
+
   } catch (e) {
     console.error('GET /posts/reels ERROR:', e);
     res.status(500).json({ msg: 'Server xatosi' });
