@@ -836,14 +836,21 @@ const authorIds = posts
   .map(id => String(id));
 
 const verifiedMap = new Map();
+const avatarMap = new Map(); // ⬅️ YANGI
 
 if (authorIds.length) {
   const users = await User.find({ _id: { $in: authorIds } })
-    .select('_id verified')
+    .select('_id verified avatar') // ⬅️ avatar qo‘shildi
     .lean();
 
-  users.forEach(u => verifiedMap.set(String(u._id), !!u.verified));
+  users.forEach(u => {
+    const id = String(u._id);
+    verifiedMap.set(id, !!u.verified);
+    avatarMap.set(id, u.avatar || null); // ⬅️ avatar map
+  });
 }
+
+
 
     const postIds = posts.map(p => p._id);
     const likedSet = new Set();
@@ -865,6 +872,8 @@ if (authorIds.length) {
         username: authorUsername,
         user: authorUsername, // frontend uchun qoldi
         userVerified: verifiedMap.get(authorId) || false,
+        userAvatar: avatarMap.get(authorId) || null,
+
 
         title: p.title,
         description: p.description,
@@ -961,14 +970,21 @@ const authorIds = docs
   .map(id => String(id));
 
 const verifiedMap = new Map();
+const avatarMap = new Map();
 
 if (authorIds.length) {
   const users = await User.find({ _id: { $in: authorIds } })
-    .select('_id verified')
+    .select('_id verified avatar')
     .lean();
 
-  users.forEach(u => verifiedMap.set(String(u._id), !!u.verified));
+  users.forEach(u => {
+    const id = String(u._id);
+    verifiedMap.set(id, !!u.verified);
+    avatarMap.set(id, u.avatar || null);
+  });
 }
+
+
 
     const ids = docs.map(p => p._id);
 
