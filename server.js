@@ -1492,13 +1492,15 @@ app.get('/profile/:username/followers', async (req, res) => {
     if (!u) return res.json([]);
 
     const followers = await Follow.find({ followingId: u._id })
-      .populate('followerId', 'username avatar')
-      .lean();
+  .populate('followerId', 'username avatar verified') // ✅ verified qo‘shildi
+  .lean();
 
-    res.json(followers.map(f => ({
-      username: f.followerId.username,
-      avatar: f.followerId.avatar || null
-    })));
+res.json(followers.map(f => ({
+  username: f.followerId.username,
+  avatar: f.followerId.avatar || null,
+  verified: !!f.followerId.verified               // ✅ qo‘shildi
+})));
+
   } catch (e) {
     console.error('GET FOLLOWERS ERROR:', e);
     res.status(500).json([]);
@@ -1511,13 +1513,14 @@ app.get('/profile/:username/following', async (req, res) => {
     if (!u) return res.json([]);
 
     const following = await Follow.find({ followerId: u._id })
-      .populate('followingId', 'username avatar')
-      .lean();
+  .populate('followingId', 'username avatar verified') // ✅ verified qo‘shildi
+  .lean();
+res.json(following.map(f => ({
+  username: f.followingId.username,
+  avatar: f.followingId.avatar || null,
+  verified: !!f.followingId.verified                  // ✅ qo‘shildi
+})));
 
-    res.json(following.map(f => ({
-      username: f.followingId.username,
-      avatar: f.followingId.avatar || null
-    })));
   } catch (e) {
     console.error('GET FOLLOWING ERROR:', e);
     res.status(500).json([]);
