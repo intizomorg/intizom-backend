@@ -313,14 +313,14 @@ function setAuthCookies(res, accessToken, refreshToken) {
   });
 
   // set accessToken
-  res.cookie('accessToken', accessToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/',
-    maxAge: 30 * 60 * 1000
-  });
+ res.cookie('accessToken', accessToken, {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'none', // ❗ MUHIM
+  domain: process.env.COOKIE_DOMAIN || '.intizom.org',
+  path: '/',
+  maxAge: 30 * 60 * 1000
+});
 
   // set refreshToken (scoped to refresh endpoint)
   res.cookie('refreshToken', refreshToken, {
