@@ -302,46 +302,33 @@ async function createRefreshToken(user) {
 
 // Centralized cookie setter/clearer
 function setAuthCookies(res, accessToken, refreshToken) {
-  // clear legacy 'token' cookie explicitly
   res.cookie('token', '', {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: '.intizom.org',
     path: '/',
     maxAge: 0
   });
 
-  // set accessToken
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: '.intizom.org',
     path: '/',
     maxAge: 30 * 60 * 1000
   });
 
-  // set refreshToken
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',
-    domain: '.intizom.org',
     path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
   // set refreshToken (scoped to refresh endpoint)
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    domain: process.env.COOKIE_DOMAIN || '.intizom.org',
-    path: '/auth/refresh',
-    maxAge: 30 * 24 * 60 * 60 * 1000
-  });
+
 
 
 // Clear auth cookies on logout
