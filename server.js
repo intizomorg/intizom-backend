@@ -326,7 +326,6 @@ function setAuthCookies(res, accessToken, refreshToken) {
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
-
   // set refreshToken (scoped to refresh endpoint)
 
 // Clear auth cookies on logout
@@ -339,7 +338,6 @@ function clearAuthCookies(res) {
     path: '/',
     maxAge: 0
   });
-
   res.cookie('refreshToken', '', {
     httpOnly: true,
     secure: true,
