@@ -329,8 +329,6 @@ function setAuthCookies(res, accessToken, refreshToken) {
 
   // set refreshToken (scoped to refresh endpoint)
 
-
-
 // Clear auth cookies on logout
 function clearAuthCookies(res) {
   res.cookie('accessToken', '', {
